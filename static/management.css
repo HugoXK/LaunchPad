@@ -189,8 +189,18 @@ body.management-page-mode, body.management-fullscreen-mode { overflow: hidden; }
 @media (max-height: 560px) {
   .management-window-head, :is(.management-page,.management-fullscreen) .management-window-head { padding: 8px 12px; }
   .management-window-title p { display: none; }
-  .management-input textarea { min-height: 48px; height: 60px; }
-  .management-status-bar { padding-top: 3px; padding-bottom: 3px; }
+  /* A phone keyboard leaves around 430px: the composer keeps its place and the chrome above it gives way instead of
+     pushing the send button below the viewport. */
+  .management-scope { flex-wrap: nowrap; align-items: center; gap: 6px; padding: 6px 10px 4px; }
+  .management-scope label { flex: 1 1 auto; flex-basis: auto; min-width: 0; display: flex; align-items: center; gap: 6px; }
+  .management-scope select { flex: 1; height: 30px; padding: 3px 6px; }
+  .management-scope button { min-height: 30px; padding: 4px 8px; font-size: 11px; }
+  .management-sessions { padding: 0 12px 2px; }
+  .management-status-bar { padding-top: 2px; padding-bottom: 2px; }
+  .management-input { padding-bottom: max(6px,env(safe-area-inset-bottom)); }
+  .management-input textarea { min-height: 44px; height: 44px; }
+  .management-input-footer { padding-top: 2px; }
+  .management-input-footer .muted { display: none; }
 }
 
 /* A command receipt as a page of its own (#235): the project page shell, with the state beside the title. */

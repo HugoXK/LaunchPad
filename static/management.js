@@ -568,6 +568,7 @@ async function renderManagement(panel, projectId = null, onActivity = () => {}) 
   function answer(value) {
     if (value.provisional) return value.provisional;
     const node = element('article', '', 'management-answer management-stream'), body = element('div', '', 'management-markdown');
+    node.setAttribute('aria-label', '管理助手回答');
     const item = { node, body, text: '' }, actions = element('div', '', 'management-answer-actions');
     const copy = button('复制回答', async () => {
       try { await navigator.clipboard.writeText(item.text); copy.textContent = '已复制'; }
@@ -588,6 +589,8 @@ async function renderManagement(panel, projectId = null, onActivity = () => {}) 
     const indicator = element('span', '', 'management-step-indicator'); indicator.setAttribute('aria-hidden', 'true');
     const state = element('span', '', 'management-step-status'), detail = element('div', '', 'management-step-detail');
     summary.append(indicator, element('span', caption, 'management-step-caption'), state); box.append(summary, detail); value.stepsBody.append(box);
+    // A screen reader opens each step by its name, not by an unlabelled disclosure triangle.
+    box.setAttribute('aria-label', '执行步骤：' + caption);
     if (data.arguments) {
       const args = element('details', '', 'management-step-arguments'); args.append(element('summary', '查看请求参数'), element('pre', JSON.stringify(data.arguments, null, 2))); detail.append(args);
     }
@@ -599,6 +602,8 @@ async function renderManagement(panel, projectId = null, onActivity = () => {}) 
   function commandReceipt(parent, receipt, step, onState = () => {}) {
     const box = element('details', '', 'management-observation management-receipt'), summary = element('summary', ''), body = element('div', '', 'management-receipt-body');
     box.open = true; box.append(summary, body); parent.append(box);
+    // The card is named by the operation and its current state, so a screen reader hears both before opening it.
+    box.setAttribute('aria-label', '操作 ' + (managementOperationLabels[receipt.operation] ?? receipt.operation) + ' · ' + managementCommandState(receipt.state)[0]);
     const view = { box, step, receipt, busy: false };
     const repaint = next => {
       if (next) view.receipt = { ...view.receipt, ...next };
@@ -607,6 +612,7 @@ async function renderManagement(panel, projectId = null, onActivity = () => {}) 
       const shown = value.state === 'failed' && value.result?.error === 'command_operator_required' ? 'not_operator' : value.state;
       const [caption, explanation] = managementCommandState(shown);
       box.dataset.state = value.state;
+      box.setAttribute('aria-label', '操作 ' + (managementOperationLabels[value.operation] ?? value.operation) + ' · ' + caption);
       summary.replaceChildren(element('strong', '操作 ' + (managementOperationLabels[value.operation] ?? value.operation)), element('span', ' · ' + caption, 'management-receipt-state'));
       body.replaceChildren(element('p', explanation, 'management-receipt-note'), element('p', '发起人 ' + value.principal_id + ' · 项目 ' + value.project_id + ' · 更新于 ' + timestamp(value.updated_at), 'management-receipt-meta'), element('p', '具体变更：' + (managementOperationLabels[value.operation] ?? value.operation) + '（目标 ' + (value.target?.task_id ?? value.target?.workflow_id ?? value.project_id ?? '—') + '）', 'management-receipt-change'));
       if (value.result?.notice) body.append(element('p', String(value.result.notice)));
