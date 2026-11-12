@@ -1,6 +1,6 @@
 import { test,expect } from '@playwright/test';
 import { rmSync } from 'node:fs';
-import { managementFixture,query } from '../test/management-fixture.mjs';
+import { managementFixture,query,command } from '../test/management-fixture.mjs';
 
 const login=async(page,base,password)=>{
   await page.goto(base+'/#/management');
