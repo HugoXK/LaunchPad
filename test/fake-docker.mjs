@@ -6,15 +6,13 @@ export class FakeDocker {
   containers = new Map(); volumes = new Map(); networks = new Map(); starts = 0; failNetwork = false;
   images = new Map([['approved', { Id: 'sha256:fixture', Config: { Labels: { 'department.bot.toolchain': 'fixture toolchain' } } }]]); builds = []; runs = [];
   calls = [];
-  // Whole-host Docker usage (#671), the shape Docker.diskUsage() returns: four null fields when /system/df cannot be read.
-  df = { images_bytes: 1000, containers_bytes: 20, volumes_bytes: 30, build_cache_bytes: 40 };
-  async diskUsage() { this.calls.push('GET /system/df'); return this.df; }
   async volumeSource(directory) { return directory; }
   // The manager's own mounts: the assistant HOME volume (#457).
   async volumeName(destination) { return destination === this.homesMount ? 'fixture-assistant-homes' : null; }
   async request(method, path, body) {
     this.calls.push(method + ' ' + path);
     if (path === '/info') return this.info || {};
+    if (path.startsWith('/system/df')) return this.df || { LayersSize: 0, Images: [], Containers: [], Volumes: [], BuildCache: [] };
     if (path.startsWith('/images/')) return this.images.get(decodeURIComponent(path.split('/')[2])) || null;
     const [kind, named] = path.slice(1).split('/'), name = named?.split('?')[0];
     if (kind === 'volumes') {
