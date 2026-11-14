@@ -8,3 +8,5 @@ such a stop, and one review cancelled for another reason (revoked claim).
   需要处理 counts 3 and holds the failed review, the development waiting for an environment and the stopped development.
 - `board-390-reviewed.png` — phone width, 已检视 column: the two stopped cards and their sentences inside the card.
 - `board-390-attention.png` — phone width, 需要处理 column: the same 3 cards the inbox and the overview count.
+
+Rendered from the tree of `b9062107d1b024a8843192f04093110d35f9fb7d`; the images are byte-identical to the first capture.
