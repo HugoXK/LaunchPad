@@ -1,0 +1,80 @@
+{
+  "issue": 744,
+  "what": "Same harness on both trees: open #/projects/101/schedules, click the 触发时间 step below 760 px, open 高级时间规则, type Cron 30 10 * * *, scroll the section into view, then read the DOM and capture.",
+  "before": {
+    "label": "before",
+    "readouts": [
+      {
+        "width": 390,
+        "preset_value": "0 9 * * *",
+        "preset_label": "每天 09:00",
+        "fold_open": true,
+        "cron": "30 10 * * *",
+        "viewport_width": 390,
+        "section_top_vs_viewport": 0,
+        "section_in_viewport": true,
+        "horizontal_overflow": false
+      },
+      {
+        "width": 768,
+        "preset_value": "0 9 * * *",
+        "preset_label": "每天 09:00",
+        "fold_open": true,
+        "cron": "30 10 * * *",
+        "viewport_width": 768,
+        "section_top_vs_viewport": 0,
+        "section_in_viewport": true,
+        "horizontal_overflow": false
+      },
+      {
+        "width": 1440,
+        "preset_value": "0 9 * * *",
+        "preset_label": "每天 09:00",
+        "fold_open": true,
+        "cron": "30 10 * * *",
+        "viewport_width": 1440,
+        "section_top_vs_viewport": -39,
+        "section_in_viewport": true,
+        "horizontal_overflow": false
+      }
+    ]
+  },
+  "after": {
+    "label": "after",
+    "readouts": [
+      {
+        "width": 390,
+        "preset_value": "custom",
+        "preset_label": "自定义 Cron / 固定周期",
+        "fold_open": true,
+        "cron": "30 10 * * *",
+        "viewport_width": 390,
+        "section_top_vs_viewport": 0,
+        "section_in_viewport": true,
+        "horizontal_overflow": false
+      },
+      {
+        "width": 768,
+        "preset_value": "custom",
+        "preset_label": "自定义 Cron / 固定周期",
+        "fold_open": true,
+        "cron": "30 10 * * *",
+        "viewport_width": 768,
+        "section_top_vs_viewport": 0,
+        "section_in_viewport": true,
+        "horizontal_overflow": false
+      },
+      {
+        "width": 1440,
+        "preset_value": "custom",
+        "preset_label": "自定义 Cron / 固定周期",
+        "fold_open": true,
+        "cron": "30 10 * * *",
+        "viewport_width": 1440,
+        "section_top_vs_viewport": -39,
+        "section_in_viewport": true,
+        "horizontal_overflow": false
+      }
+    ]
+  }
+}
