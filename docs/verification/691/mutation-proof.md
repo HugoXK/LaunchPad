@@ -51,7 +51,7 @@ Result: **1 failed**, same assertion `:327`, diff `+ Array []` — the filtered 
 
 ## 5. The same UT file on base `886442b5` still fails
 
-The new `test/ut/static/time-format.test.mjs` was copied onto a base `886442b5` tree and run there:
+The `test/ut/static/time-format.test.mjs` as it stood at `0e0bc660` (4 tests) was copied onto a base `886442b5` tree and run there. `d040f041` then adds a fifth test (the fixed-instant one, +15 −0), so the file at the PR tip has 5 tests; the base run below belongs to the 4-test version and was not repeated for the fifth.
 
 ```
 # tests 4
