@@ -122,7 +122,7 @@ async function applyGithubRepositories(next, listed) {
   // A read that listed the whole thing — this one and the notice's own button are the only two — is the recovery.
   clearGithubRepositoriesUnread();
   repositories = listed;
-  options($('repository-filter'), repositories, r => r.full_name);
+  if (typeof scopePickerRepositoriesOwner !== 'undefined') scopePickerRepositoriesOwner = me.id;
   const editing = tab === 'identity' && identityFormBeingEdited();
   if (!editing && !projectRoute() && ['projects', 'identity'].includes(tab)) { await route(); return true; }
   if (typeof syncConsoleShell === 'function') syncConsoleShell(projectRoute());

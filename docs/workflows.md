@@ -20,7 +20,7 @@
 | `comment` 可评论和打标签 | 写 Issue 和 PR：评论、加删标签、改标题和正文、指派人、关闭或重开、提 Issue、发检视，Actions 失败可以重跑一次；不改代码 | Issues、Pull requests |
 | `develop` 可开发并开 PR | 还可以改代码、交付 bot PR | 再加 Contents（文件、分支和引用、合并 PR） |
 
-合并 PR 是 Contents 写，包含在 `develop` 里，Manager 默认就有，不单设一档。上限在启动项目时选择（默认 `comment`；受信任组织可以预设它下面的项目启动时的档位，见[管理员手册](admin.md)），之后由项目管理员在「监听与触发」修改。bot 的每一次写入都在上限之内：
+合并 PR 是 Contents 写，包含在 `develop` 里，Manager 默认就有，不单设一档；提示词要求 bot 不自行合并，见[在角色配置里调整行为](rules.md#bot-开的-pr-怎样跟进修改)。上限在启动项目时选择（默认 `comment`；受信任组织可以预设它下面的项目启动时的档位，见[管理员手册](admin.md)），之后由项目管理员在「监听与触发」修改。bot 的每一次写入都在上限之内：
 
 - 工作类型：检视、通用回复和 Actions 失败处理要 `comment`，开发和开发任务要 `develop`；普通事项、CI 观察和发行说明在任何档位都能运行。工作类型的写入（默认值或项目保存的值）超过上限的部分不生效，降回上限后自动恢复。普通事项的写入默认继承上限：`develop` 时可以修改代码并交付 PR。
 - `github_write`：Issues 和 Pull requests 路由要 `comment`，Contents 路由要 `develop`。项目角色、飞书群、管理助手都经同一个入口，超过上限时返回 `capability_ceiling`，带 `needed`（需要的档位）和 `ceiling`（项目当前档位），不发出任何请求。角色的 GitHub 写权限、群档位和私聊里本人的权限都只能在上限之下再收窄。
@@ -54,11 +54,11 @@
 | `pull_request.updated` | PR 修改、可信讨论、提交检视、回复检视意见 | `review_pr_discussion`，默认还要 `review_pull_requests` 开着 |
 | `pull_request.mention` | PR 上的评论提到 bot | 默认跟随 `review_pull_requests` |
 | `pull_request.labeled` | 有人给 PR 加上项目登记的标签 | 标签列表 |
-| `review.published` | 检视发布：Issue 上有人加的开发标签时的 Issue 检视，或 bot PR 的检视采纳了修改要求、发现可执行问题 | `review.published.issue`、`review.published.pr` |
+| `review.published` | 检视发布：Issue 上有人加的开发标签时的 Issue 检视；能力上限为 `develop` 时，结论为「可开发」（`conclusion` 为 `ready_for_development`）的 Issue 检视（没有开发标签也算，#1026）；或 bot PR 的检视采纳了修改要求、发现可执行问题 | `review.published.issue`、`review.published.pr` |
 | `development.stopped` | Issue 的开发因开发标签被去掉（或 Actions 提报的 Issue 被指派给别人）停在 `waiting_permission`（#815） | 无单独开关，项目启用即可 |
 | `release.manual` | 「发版本」页请求 CI 观察或起草发行说明 | 对应工作类型的开关 |
-| `actions.run_failed` | 默认分支的 Actions 运行失败 | Actions 失败处理的开关 |
-| `schedule.due` | `manager.check` 定时计划到期 | 定时检查的开关 |
+| `actions.run_failed` | 默认分支的 Actions 运行失败，或推送标签触发、提交在默认分支历史上的运行失败（版本标签运行，事件写明标签名，见 [Actions 失败分类与提报](actions-failures.md#运行范围与扫描)） | Actions 失败处理的开关 |
+| `schedule.due` | `manager.check` 项目定时任务到期 | 定时检查的开关 |
 
 提到 bot 的评论（`issue.mention`、`pull_request.mention`）不按评论人过滤：任何人在打开的 Issue 或 PR 上 `@bot`，包括公开仓库里的仓库外人员，都会交给 Manager 分派一次，由它按提示词决定回答、检视还是不处理。Issue 上的提到 bot 和其他 Issue 事件一样，在能力上限为 `develop` 时也提供「开发 Issue」；开始开发要 Manager 写明依据（有人加的开发标签、triage 以上权限的维护者在评论里的要求，或 Manager 提示词里的规则，#815），外人的评论不作为开发依据，控制面在 `create_task` 时拒绝。Manager 自己的 `github_write` 不受事件来源限制，回应外人时由 Manager 提示词把握。
 
@@ -68,7 +68,7 @@
 
 每个事件写成 `dispatch_events` 里的一条记录，`event_key` 唯一，同一事件只记录一次（重复投递、同一 PR head 的 webhook 都是同一个事件）。记录里有这个事件可以新建的工作和续接的方式：
 
-- **可以新建的工作**：事件对象上的每种工作（检视、通用回复、开发等）和它的完整任务规格（类型、对象、head、输入、唯一键）。项目现在不允许的工作（项目停用、工作类型关闭、能力上限不够、工作类型不处理这类事件）也列给 Manager，附上原因（#815），Manager 选了它会被拒绝。开发 Issue 在 Issue 的每个事件上都提供，开始开发要有 Manager 写明、控制面核对的依据（见[开发什么时候开始](rules.md#自动开发什么时候开始)）；bot PR 的修订预算等其余条件仍在提供开发时检查。检视结论是否支持开发、有没有指派人，是 Manager 的判断，写在事件的 `facts` 里；
+- **可以新建的工作**：事件对象上的每种工作（检视、通用回复、开发等）和它的完整任务规格（类型、对象、head、输入、唯一键）。项目现在不允许的工作（项目停用、工作类型关闭、能力上限不够、工作类型不处理这类事件）也列给 Manager，附上原因（#815），Manager 选了它会被拒绝。开发 Issue 在 Issue 的每个事件上都提供，开始开发要有 Manager 写明、控制面核对的依据（见[开发什么时候开始](rules.md#自动开发什么时候开始)）；bot PR 的修订预算等其余条件仍在提供开发时检查。检视结论是否支持开发、有没有被别人认领，是 Manager 的判断，依据的事实写在事件的 `facts` 里（检视发布时带 `development.claims`：指派人、其他人关联的 PR、最近的评论原文，#1047）；
 - **续接选项**：同一项目同一对象上排队、执行中或发布中的检视；没有这些时，是这个对象最近一次已发布的检视，续接后它作为同一任务的下一轮继续（#770）。选项在分派时重新查询。PR 推送新提交也是更新：续接的检视把工作区移到新 head 继续，发布中的检视发完后在下一轮看新 head（见[架构](architecture.md#检视与开发数据流)）。还有检视可续接时，推送事件不提供「检视 PR」新建选项，同一次推送不会有两条检视。
 
 后台的分派器逐条认领事件（带租约），交给 Manager 跑一轮普通的 agent 循环（#381）：系统提示是固定的分派规则，后面是完整 Manager 分派提示词；用户消息是事件摘要、同一对象上最近的任务、`work`（`create`：这个事件可以新建的工作，各附它的写入；`unavailable`：项目现在不允许的工作和原因；`continue`：可以续接的任务）和本事件已经做过的 GitHub 写入。循环里 Manager 可以按角色权限用 `github_read`、`github_search`、`read_job_log` 读取事件所在仓库，用 `github_write` 写这个仓库（例如请作者补充信息的评论、分类标签），每一步之前续租。工具说明见[共享 Agent 后端](agent-runtime.md#github-写入github_write)。最多 16 步，最后一步只提供三个决定工具，模型必须调用其中一个。模型用下面三个工具之一回答一种结果：
@@ -83,9 +83,11 @@ Manager 的写入只能落在本事件所在的仓库：`github_write` 没有仓
 
 决定在一个事务里落地：新建任务、写续接、记录理由，并通知拥有这个事件的模块。新建任务的输入里有 `manager`（事件 id、理由、简要说明、收窄后的写入），执行时作为说明交给 agent，不能扩大范围、写入或控制面条件；任务日志有一条 `dispatch` 记录，`task_events` 把任务和事件关联起来。
 
-人工重试仍使用原事件编号，事务中先把失败原因和原轮尝试次数保存到 `dispatch_retries`，再把同一事件改回等待；重复重试已非失败状态的事件返回 409，不新增重试记录。详情保留最近 50 条人工重试，当前轮的结果、尝试次数与原失败分开展示，重启后仍可读取。
+人工重试仍使用原事件编号，事务中把失败原因和累计尝试次数保存到 `dispatch_retries`。非明确取消的失败事件及处于退避期的 pending 事件可请求立即重试；不重置累计次数，也不丢失自动失败历史。其他状态返回 409。详情保留最近 50 条人工重试。
 
-失败的分派按 5 秒、15 秒、45 秒……最长 10 分钟重试。第 8 次仍失败时不直接标为失败，而是 15 分钟后再交给 Manager 一轮（`answer_round` 记为 1）；这一轮跳过常设规则，即使已经没有可选工作也会询问 Manager：用户消息里的 `previous_failures` 写明失败次数和最后的错误，系统提示要求它尽量简单地决定，做不了提出的请求时在对象上回复那个人（#815）。这一轮也失败时才标为 `failed`，等人在事件记录里点「重试」（重试会重新计数，也重新给一轮）；等待结果的模块会收到「没有决定」并停止等待。进程重启时认领中的事件回到待分派；再决定一次也不会重复建任务，因为任务规格带唯一键、续接按事件去重。
+失败的分派按 5 秒、15 秒、45 秒……最长 10 分钟自动退避。没有固定八次或“最后一轮”后终止：每 3 次失败记录提醒，下一次 Manager 输入通过 `recovery` 提供原始失败、尝试及报告入口。没有形成决定不等于忽略事件，不调用等待模块的 declined hook；显式取消仍是终止边界，API 拒绝手动复活、UI 不提供重试按钮。`answer_round` 仅用于读取历史行，当前不再新增这种最后一轮，也不再注入 previous_failures 的最后机会提示。历史行缺少逐次记录时，原错误通过 recovery.legacy_failure 提供。进程重启恢复认领，任务规格和续接继续按事件幂等。
+
+`dispatch_failures` 跟随已有项目 `trajectory_days` 保留窗口，由存储日常清理按批处理。默认 null 表示明确选择长期保留；设置项目/全局天数后，旧自动失败记录与对应原始轨迹按同一策略过期，最新错误、累计次数和事件仍保留，不改变重试状态。清理数量见存储状态的 `retention_cleanup.dispatch_failures`，记录占用包括在现有 SQLite 存储总量中。
 
 ## 常设规则
 
@@ -140,7 +142,7 @@ Manager 分派提示词在「角色 → Manager」里作为一份完整文本编
 - **CI 观察**：请求写成事件，发布记录在 `observation_event` 里等待决定；建了任务才有 `observation_task`，不处理时 `observation_error` 写明 Manager 的理由。
 - **发行说明**：控制面核验每个来源恰好出现一次，标题和链接由控制面写出；Manager 不处理时按内置规则直接列出来源。
 - **Actions 失败处理**：日志引用核验、单次重跑预算和同一失败只报一次不变；Manager 不处理时这次失败记为 `ignored`，不重跑也不提报。
-- **定时检查**：计划的 `workflow` 写 `manager.check`，`parameters.instruction` 写要检查什么。`parameters.file_issues` 会覆盖执行角色的 GitHub 写权限：为真时即使角色没有写权限也允许检查任务用 `github_write` 提报或回复 Issue，为假时即使角色有写权限也拒绝，未设置时跟随角色策略。到期成为 `schedule.due` 事件：已有检查内容时直接建任务，否则由 Manager 按「定时检查」章节决定（授权身份是计划的服务主体，由 Manager 角色执行）；无论计划如何设置，写入仍受项目能力上限约束，上限至少为 `comment` 时才可以经 `github_write` 提报 Issue 和评论，见[定时任务](schedules.md)。
+- **定时检查**（项目定时任务，#1027）：计划的 `workflow` 写 `manager.check`，结果留在任务记录和 GitHub 上，不发飞书；`parameters.instruction` 写要检查什么。`parameters.file_issues` 会覆盖执行角色的 GitHub 写权限：为真时即使角色没有写权限也允许检查任务用 `github_write` 提报或回复 Issue，为假时即使角色有写权限也拒绝，未设置时跟随角色策略。到期成为 `schedule.due` 事件：已有检查内容时直接建任务，否则由 Manager 按「定时检查」章节决定（授权身份是计划的服务主体，由 Manager 角色执行）；无论计划如何设置，写入仍受项目能力上限约束，上限至少为 `comment` 时才可以经 `github_write` 提报 Issue 和评论，见[定时任务](schedules.md)。
 - 合并队列、发布 outbox、对账、PR head 校验、bot 分支归属、以开发标签为依据的开发在发布前标签仍在、发布前测试都不变。
 
 ## 升级迁移
@@ -159,7 +161,7 @@ Manager 分派提示词在「角色 → Manager」里作为一份完整文本编
 
 ## 控制台分派记录
 
-在「角色 → Manager → 最近的分派」按收到时间、状态、决定和事件类型筛选。输入时间按浏览器时区解释，开始时间包含边界，结束时间不包含边界；更早记录使用稳定游标，期间新收到的事件不会把已读记录重复挤到下一页。详情按触发事件、Manager 判断、关联任务和人工重试展示；“不分派任务”只描述任务分派，不表示没有进行过工具操作，地址中的 `dispatch` 参数可恢复同一事件；模型字段仅是当时记录的名称，没有模型配置版本时不推断。读取失败保留上次记录并提示范围可能过期，首次失败明确未知；权限失效清空列表和详情，离开项目后的迟到响应不写回当前页。
+在「角色 → Manager → 最近的分派」按收到时间、状态、决定和事件类型筛选。输入时间按浏览器时区解释，开始时间包含边界，结束时间不包含边界；更早记录使用稳定游标，期间新收到的事件不会把已读记录重复挤到下一页。详情按触发事件、Manager 判断、自动恢复记录、关联任务和人工重试展示；`recovery` 的失败历史通过 `failure_before` 按尝试号向前翻页；“不分派任务”只描述任务分派，不表示没有进行过工具操作，地址中的 `dispatch` 参数可恢复同一事件；模型字段仅是当时记录的名称，没有模型配置版本时不推断。读取失败保留上次记录并提示范围可能过期，首次失败明确未知；权限失效清空列表和详情，离开项目后的迟到响应不写回当前页。
 
 ## 接口
 
@@ -167,9 +169,9 @@ Manager 分派提示词在「角色 → Manager」里作为一份完整文本编
 | --- | --- | --- |
 | `/api/repositories/:id/manager` | GET | 提示词（`revision`、`content`）、各章节（内置文本、是否写过、实际来源和生效文本）、工作类型（开关、写入、可选写入、模型）、分派模型、事件开关、常设规则（`standing_rules`：`revision`、`source` 为 `builtin` 或 `saved`、`rules`）和迁移记录 |
 | `/api/repositories/:id/manager` | PUT | `expected_revision` 必填，`prompt`（完整分派提示词）、旧 `content`（任务规则）、`work`（`{<工作类型>: {enabled, writes}}`）、`events`（事件开关和标签列表）、`standing_rules`（常设规则的完整列表，整份替换，空数组表示都交给 Manager）可选；经管理服务的 `manager.update` 命令执行，审计相同；版本不一致返回 409 `manager_revision_conflict` |
-| `/api/repositories/:id/dispatch` | GET | 事件记录，最新在前：类型、摘要、状态、结果、理由、简要说明、新建或续接的任务、模型、失败原因、控制面拒绝（`refusals`：工作、代码、原因、时间）、按常设规则决定时的规则（`rule`：`id`、`revision`）、是否进入自动回答轮（`answer_round`，0 或 1）；`state`（含 `filtered`，即被过滤的事件）、`decision`（create/continue/ignore）、`type`、`from`（含）/`until`（不含，UTC ISO 时间）、`limit`（1–100）可选；`next_cursor` 用于更早分页，原 `offset` 仍兼容但不能和 cursor 同用。游标绑定项目与筛选，改变筛选后重新读取首页 |
-| `/api/repositories/:id/dispatch/:event` | GET | 本项目的事件摘要、来源、原投递编号、已记录的模型名称、当前状态、控制面拒绝（`refusals`）、决定它的常设规则（`rule`）、自动回答轮（`answer_round`）、实际关联任务和最近 50 条人工重试；被过滤的事件在 `result.filtered` 里给出原因代码。排除原始 facts、候选任务输入、租约及凭据；不以当前模型配置补写历史 |
-| `/api/repositories/:id/dispatch/:event/retry` | POST | 重试失败的分派 |
+| `/api/repositories/:id/dispatch` | GET | 事件记录，最新在前：类型、摘要、状态、结果、理由、简要说明、新建或续接的任务、模型、失败原因、控制面拒绝（`refusals`：工作、代码、原因、时间）、按常设规则决定时的规则（`rule`：`id`、`revision`）、历史回答轮兼容字段（`answer_round`，当前不再新增）；`state`（含 `filtered`，即被过滤的事件）、`decision`（create/continue/ignore）、`type`、`from`（含）/`until`（不含，UTC ISO 时间）、`limit`（1–100）可选；`next_cursor` 用于更早分页，原 `offset` 仍兼容但不能和 cursor 同用。游标绑定项目与筛选，改变筛选后重新读取首页 |
+| `/api/repositories/:id/dispatch/:event` | GET | 本项目的事件摘要、来源、原投递编号、已记录的模型名称、当前状态、控制面拒绝（`refusals`）、决定它的常设规则（`rule`）、历史回答轮兼容字段（`answer_round`）、`recovery`（失败、提醒及分页游标）、实际关联任务和最近 50 条人工重试；被过滤的事件在 `result.filtered` 里给出原因代码。支持 `failure_before` 按失败尝试号分页，非法值返回 400 `invalid_dispatch_failure_cursor`；排除原始 facts、候选任务输入、租约及凭据；不以当前模型配置补写历史 |
+| `/api/repositories/:id/dispatch/:event/retry` | POST | 非明确取消的 failed 或 pending 退避事件立即重试，保留累计次数；其余返回 409 `dispatch_event_not_failed`（历史错误码） |
 | `/api/tasks/:id/dispatch` | GET | 任务因哪些事件新建或续接，以及 Manager 的理由 |
 | `/api/repositories/:id/workflows[/...]` | 任意 | 410 `workflows_removed`，说明里给出替代路径 |
 
@@ -178,3 +180,5 @@ Manager 分派提示词在「角色 → Manager」里作为一份完整文本编
 ## 看板与统计
 
 看板按工作类型分卡：检视 Issue、检视 PR、开发 Issue、跟进 bot PR、通用回复，以及「发版本」。原自定义工作流的任务都归入「通用回复」卡片；以前保存的视图里的 `custom.<id>` 筛选按「通用回复」处理，`review`、`development` 仍表示全部检视和全部开发。`GET /api/board` 的 `workflows` 字段保留原名，列出这些工作类型。用量统计同样按工作类型汇总，字段 `workflow` 是工作类型 id。
+
+恢复详情额外支持 `GET /api/repositories/:id/dispatch/:event?failure_before=<正整数尝试号>`，返回 `recovery.failures/reports/next_before_attempt`。非法游标返回 400 `invalid_dispatch_failure_cursor`。人工重试只推进 `next_run_at` 并留存旧失败，失败态或退避态之外返回 409 `dispatch_event_not_failed`。

@@ -50,7 +50,7 @@ async function renderFeishuSetup(panel, request) {
   if (request !== renderVersion) return;
   const base = feishuBase(), match = /^#\/(?:settings\/feishu|identity\/feishu-apps)\/(new|[a-f0-9]{48})\/([0-4])$/.exec(location.hash);
   if (!match) {
-    const overview = card('飞书应用连接'), setupLinks = element('div', '', 'actions');
+    const overview = settingsCard('飞书应用连接'), setupLinks = element('div', '', 'actions');
     if (data.platform || data.organizations.length) setupLinks.append(channelLink(feishuAddress(), '新增飞书应用连接', 'button-link'));
     setupLinks.append(channelLink('#/identity/feishu', '管理个人与群绑定', 'button-link quiet'));
     if (data.platform) setupLinks.append(channelLink('#/settings/service-roles', '管理服务角色权限', 'button-link quiet'));
@@ -92,13 +92,13 @@ async function renderFeishuSetup(panel, request) {
   if (id !== 'new' && !c) { panel.append(note('连接不存在，或你没有权限管理它。'), channelLink(base, '返回飞书连接')); return; }
   if (!c && !data.platform && !data.organizations.length) { panel.append(note('你当前不能为任何组织新增飞书应用。'), channelLink(base, '返回飞书连接')); return; }
   if (!c && step > 1) { panel.append(note('请先保存应用连接，再配置事件、发布和试用。'), channelLink(feishuAddress(), '从创建应用开始')); return; }
-  const title = card('飞书应用连接向导'), nav = element('nav', '', 'wizard-steps'); nav.setAttribute('aria-label', '飞书连接步骤');
+  const title = settingsCard('飞书应用连接向导'), nav = element('nav', '', 'wizard-steps'); nav.setAttribute('aria-label', '飞书连接步骤');
   title.append(note(`第 ${step + 1} / ${feishuSteps.length} 步${c ? ' · ' + (c.app_name || c.app_id) + (c.tenant_name ? ' · ' + c.tenant_name : '') : ''}。应用连接可随时返回继续；凭据保存后不回显。`));
   feishuSteps.forEach((caption, i) => {
     const item = button(`${i + 1}. ${caption}`, () => { location.hash = feishuAddress(id, i); }, 'quiet');
     item.disabled = !c && i > 1; if (i === step) item.setAttribute('aria-current', 'step'); nav.append(item);
   }); title.append(nav, channelLink(base, '返回连接列表')); panel.append(title);
-  const body = card(feishuSteps[step]); panel.append(body);
+  const body = settingsCard(feishuSteps[step]); panel.append(body);
   const go = (next = step + 1) => { location.hash = feishuAddress(id, next); };
   const next = caption => body.append(button(caption, () => go(), ''));
   if (step === 0) {
@@ -233,7 +233,7 @@ async function renderFeishuSetup(panel, request) {
     body.append(feishuList(['让每位使用者在「个人设置 → 飞书绑定」点击「创建个人绑定」生成绑定串并在机器人私聊发送（或在私聊发起 /bind），打开链接并使用本地账户或 GitHub 登录确认绑定。',
       '绑定后直接在私聊发送“你好”或“我能管理哪些项目”，确认收到助手回复后才完成接入。不需要先选项目；绑定不增加权限，项目管理员仍需授权。',
       '需要群内使用时，由已绑定飞书、在该群中并对相关仓库有配置权限的维护人，在「个人设置 → 飞书绑定」点击「创建群绑定」，为该群选择服务角色和项目范围，再在群里 @ 机器人提问。',
-      '需要定时汇报或巡检时，在「个人设置 → 飞书绑定」对应个人或群绑定的「定时任务」中添加，用提示词说明要做什么；项目日报和事件订阅可直接选择有权限的私聊或群作为目的地。']),
+      '需要定时汇报或巡检时，在「个人设置 → 飞书绑定」对应个人或群绑定的「定时任务」中添加，用提示词说明要做什么，由那个会话的助手执行；项目定时任务的结果不发飞书。事件订阅可直接选择有权限的私聊或群作为目的地。']),
       channelLink('#/identity/feishu', '前往飞书绑定', 'button-link'), button('刷新收件与发送状态', () => render().catch(error), 'quiet'));
     await channelDiagnostics(c, panel, data.platform);
   }

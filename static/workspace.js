@@ -243,10 +243,11 @@ function workspaceOverview() {
   const root = element('section', '', 'workspace-overview');
   const alive = () => root.isConnected && me?.id === owner && current?.id === id && current.section === 'overview' && location.hash === routeKey;
 
-  // Top Workbench Bar: View Tabs + Capacity Summary + Actions
+  // View tabs move into the global project header; this row keeps live capacity and actions.
   const topBar = element('div', '', 'workbench-top');
   const viewTabs = element('nav', '', 'workbench-tabs');
   viewTabs.setAttribute('aria-label', '项目工作台视图');
+  viewTabs.dataset.projectId = id;
 
   const roleTab = element('a', '', 'workbench-tab');
   roleTab.href = `#/projects/${id}/overview`;
@@ -273,7 +274,7 @@ function workspaceOverview() {
 
   const refresh = button('刷新总览', () => void update(), 'quiet');
   const newTaskBtn = element('a', '+ 新建任务', 'button-link btn-primary workbench-new-task');
-  newTaskBtn.href = `#/new-task/${id}`;
+  newTaskBtn.href = consolePageAddress('new-task', id);
   rightBar.append(liveSummary, refresh, newTaskBtn);
   topBar.append(viewTabs, rightBar);
   root.append(topBar);
@@ -360,7 +361,7 @@ function workspaceOverview() {
     element('a', '项目电脑状态 →', 'workbench-quick-link'),
   );
   quickLinks.children[0].href = `#/projects/${id}/roles`;
-  quickLinks.children[1].href = `#/inbox/${id}`;
+  quickLinks.children[1].href = consolePageAddress('inbox', id);
   quickLinks.children[2].href = `#/projects/${id}/machine`;
   footer.append(healthStatus, quickLinks);
 
@@ -378,7 +379,9 @@ function workspaceOverview() {
   const revoke = err => {
     if (![401, 403, 404].includes(err?.status) || !alive()) return false;
     $('project-page').replaceChildren(consoleState('项目访问已变化', '无法继续读取这个项目，请重新加载当前授权。', { tone: 'error', retry: () => start().catch(error) }));
-    current = null; return true;
+    current = { id, unavailable: err.status === 404 ? 'missing' : err.status === 401 ? 'login' : 'forbidden' };
+    repositories = repositories.filter(repo => String(repo.id) !== String(id));
+    syncConsoleShell(); return true;
   };
 
   async function loadRoleBoard() {

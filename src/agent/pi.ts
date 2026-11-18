@@ -1,3 +1,4 @@
+import { ResultSession, projectResultOwner, resultScope, commandResult } from './tool-results.js';
 import { randomId } from '../core/security.js';
 import { stop, TaskError, type Redactor } from './common.js';
 import type { AgentServices } from './runtime.js';
@@ -6,18 +7,25 @@ import type { AgentModel } from './gateway.js';
 import type { Store } from '../storage/database.js';
 import { finalizationReserve } from './tool-context.js';
 import { deliverMailboxToolReply } from '../roles/task-tools.js';
+import { modelTransport, nativeModelConnection } from '../harness/model-connection.js';
 
 /** The Pi SDK the project computer image installs (runner/package.json). scripts/check-runtime.mjs keeps the two equal. */
 export const piRuntime = { agent: 'pi', package: '@earendil-works/pi-coding-agent', version: '1.4.0' } as const;
 
-export interface PiConversation { history?: any[]; resume?: boolean; offset?: number; model?: AgentModel; boundary(stage: string): Promise<{prompt?: string, messages?: string[]}> }
+/**
+ * A review's conversation with its Pi session. The session itself lives in Pi's session files (#1040); the control plane
+ * answers its boundaries: the start prompt (given how the session began: `recovery` is native_resume when it holds the
+ * earlier round), and the updates between turns. resume continues the session still waiting in this workspace.
+ */
+export interface PiConversation { resume?: boolean; offset?: number; model?: AgentModel; boundary(stage: string, recovery?: string): Promise<{prompt?: string, messages?: string[]}> }
 /**
  * One Pi session in a task workspace, driven through the runner mailbox. The control plane keeps the provider boundary
- * (every model request goes through services.request), the tool allowlist and every write; the runner process only runs
+ * for explicit gateway mode, the tool allowlist and every platform write; direct mode lets the native SDK connect to its provider. The runner process runs
  * the Pi SDK loop with the tools named in config.
  */
 export interface PiSession<T> {
   store: Store;
+  results?: ResultSession;
   taskId: string;
   /** The task lifecycle guard, checked before every mailbox exchange. */
   guard: () => Promise<void>;
@@ -64,6 +72,8 @@ export interface PiSession<T> {
 
 export function piAdapter<T>(session: PiSession<T>) {
   const { store, taskId, guard, workspace, redactor, config, conversation, signal } = session, key = session.key ?? 'pi';
+  const task=store.get('SELECT * FROM tasks WHERE id=?',taskId)??{id:taskId};
+  const resultFiles=session.results??new ResultSession(store,resultScope(store,task),()=>projectResultOwner(task.repository_id),guard,redactor.values,()=>true);
   // Every wait of the control plane ends as soon as the session is cancelled. A cancelled session is never reported as a
   // resumable interruption: the caller releases its workspace, and the next run starts from task records.
   const cancelled = () => signal?.reason ?? new TaskError('harness_cancelled', 'cancelled');
@@ -73,6 +83,11 @@ export function piAdapter<T>(session: PiSession<T>) {
   });
   const pause = (ms: number) => abortable(new Promise(resolve => setTimeout(resolve, ms)));
   return async ({ request, model, outputTokens }: AgentServices): Promise<T> => {
+    config.model_transport = modelTransport(config.model_transport);
+    if(config.model_transport==='direct'){
+      config.native_model={...nativeModelConnection(model),model:model.model};
+      redactor.add(model.key);
+    }
     config.model = model.capabilities ? {context_window:model.capabilities.context_window,max_output_tokens:model.capabilities.max_output_tokens,reasoning:model.capabilities.reasoning} : {context_window:128000,max_output_tokens:8192,reasoning:false};
     config.output_tokens = outputTokens ?? config.model.max_output_tokens;
     const finishingNames=new Set(session.finalizationTools??config.finish_tools??[]);
@@ -86,19 +101,13 @@ export function piAdapter<T>(session: PiSession<T>) {
       session.runtime.report(runtime);
       if (runtime.version !== session.runtime.version) stop('harness_version_mismatch', 'waiting_configuration', `项目电脑的 Pi 版本是 ${runtime.version}，角色配置固定的是 ${session.runtime.version}；不会换用其他版本。`);
     }
-    const bytes = Buffer.from(JSON.stringify(redactor.clean(config))); if (bytes.length > 2 * 1024 * 1024) stop('agent_context_too_large', 'waiting_configuration', `执行上下文大小 ${bytes.length} 字节，超过 2 MiB 上限。`);
+    // The private runner bootstrap carries a native provider credential, never a tool result or prompt.
+    const wireConfig=redactor.clean(config);if(config.model_transport==='direct')wireConfig.native_model=config.native_model;
+    const bytes = Buffer.from(JSON.stringify(wireConfig)); if (bytes.length > 2 * 1024 * 1024) stop('agent_context_too_large', 'waiting_configuration', `执行上下文大小 ${bytes.length} 字节，超过 2 MiB 上限。`);
     if (!conversation?.resume && !session.resume) {
       for (let offset = 0; offset < bytes.length; offset += 30000) {
         const saved = await workspace.call(key + ':config:' + offset, { type: 'workspace_agent_config', base64: bytes.subarray(offset, offset + 30000).toString('base64'), offset, final: offset + 30000 >= bytes.length });
         if (saved.error) stop('execution_interrupted', 'waiting_environment', `写入执行配置时中断，offset=${offset}。`);
-      }
-      if (conversation?.history?.length) {
-        const history = Buffer.from(JSON.stringify(redactor.clean(conversation.history)));
-        if (history.length > 32 * 1024 * 1024) stop('agent_context_too_large');
-        for (let offset = 0; offset < history.length; offset += 30000) {
-          const saved = await workspace.deliver({ type: 'workspace_agent_history', base64: history.subarray(offset, offset + 30000).toString('base64'), offset, final: offset + 30000 >= history.length });
-          if (saved.error) stop('execution_interrupted', 'waiting_environment');
-        }
       }
     }
     // A stored started receipt is not evidence that its PID still exists. Ask the runner again on every entry;
@@ -149,7 +158,8 @@ export function piAdapter<T>(session: PiSession<T>) {
         if (state.boundary && conversation && !answered.has('boundary:' + state.boundary.id)) {
           const id = String(state.boundary.id);
           if (!/^[a-f0-9]{48}$/.test(id)) stop('model_request_invalid');
-          const reply = Buffer.from(JSON.stringify(redactor.clean(await conversation.boundary(state.boundary.stage))));
+          const recovery = typeof state.boundary.recovery === 'string' ? state.boundary.recovery : undefined;
+          const reply = Buffer.from(JSON.stringify(redactor.clean(await conversation.boundary(state.boundary.stage, recovery))));
           if (reply.length > 32 * 1024 * 1024) stop('agent_context_too_large');
           for (let at = 0; at < reply.length; at += 30000) {
             const sent = await workspace.call(`${key}:boundary:${id}:${at}`, { type: 'workspace_agent_boundary', request_id: id, base64: reply.subarray(at, at + 30000).toString('base64'), offset: at, final: at + 30000 >= reply.length });
@@ -160,22 +170,17 @@ export function piAdapter<T>(session: PiSession<T>) {
         if (state.state === 'completed' || state.state === 'review_ready') {
           if (inFlight.size) await Promise.allSettled([...inFlight.values()]);
           if (backgroundError !== null) throw backgroundError;
-          if (state.state === 'review_ready') {
-            const parts: Buffer[] = []; let size = 1;
-            for (let at = 0; at < size; at += 45000) {
-              const part = await workspace.deliver({ type: 'workspace_agent_session', offset: at });
-              if (part.error || !Number.isSafeInteger(part.size) || part.size > 32 * 1024 * 1024 || typeof part.base64 !== 'string') stop('agent_context_too_large');
-              size = part.size; parts.push(Buffer.from(part.base64, 'base64'));
-            }
-            const messages = JSON.stringify(redactor.clean(JSON.parse(Buffer.concat(parts).toString('utf8'))));
-            store.run('UPDATE tasks SET messages=? WHERE id=?', messages, taskId);
-          }
           return session.complete({ ...state, result: redactor.clean(state.result) }, publication);
         }
-        // A failed agent carries error as well, so it takes this path and is retried in a fresh workspace; its reason is kept.
-        if (state.error === 'agent_context_too_large') stop('agent_context_too_large', 'failed', '会话压缩后仍超过 2 MiB 或 128k 上下文上限；重试将使用空会话。');
+        // The runner's reason goes into the task log before any stop, and the fault names it too (#1040).
         if (state.state === 'failed') workspace.log({ type: 'agent_failure', error: state.error || null, detail: redactor.text(String(state.detail || '')).slice(0, 1000) || null });
-        if (state.error === 'disk_full') stop('disk_full', 'waiting_environment', `项目电脑的工作卷空间不足，任务执行进程已停止${state.detail ? '：' + redactor.text(String(state.detail)).replace(/\s+/g, ' ').slice(0, 300) : ''}。`);
+        const reason = state.detail ? '：' + redactor.text(String(state.detail)).replace(/\s+/g, ' ').slice(0, 300) : '';
+        // The session no longer fits after Pi compacted it and retried; the next run does not reopen it (src/roles/harness.ts).
+        if (state.error === 'agent_context_too_large') stop('agent_context_too_large', 'failed', `Pi 压缩会话并重试后，请求仍超过模型上下文${reason}。重试时不再续接这个会话，按任务记录重新开始。`);
+        // Pi's compaction itself failed, usually its summary request; the session is kept and the retry reopens it.
+        if (state.error === 'agent_compaction_failed') stop('agent_compaction_failed', 'retry_wait', `Pi 压缩会话失败${reason}。`);
+        // A failed agent carries error as well, so it takes this path and is retried in a fresh workspace; its reason is kept.
+        if (state.error === 'disk_full') stop('disk_full', 'waiting_environment', `项目电脑的工作卷空间不足，任务执行进程已停止${reason}。`);
         if (state.error || ['interrupted', 'missing'].includes(state.state)) stop('execution_interrupted', 'waiting_environment', state.state === 'failed'
           ? `任务执行进程失败：${redactor.text(String(state.detail || '没有返回原因')).replace(/\s+/g, ' ').slice(0, 300)}。`
           : `轮询任务执行进程时中断，状态=${state.state || '未知'}，offset=${offset}。`);
@@ -212,6 +217,19 @@ export function piAdapter<T>(session: PiSession<T>) {
               await deliverMailboxToolReply(redactor.clean(reply), id, chunk => workspace.deliver(chunk), '发送工作区结果时中断。');
               return;
             }
+            if (kind === 'repository' && ['store_command_result','store_tool_result','read_tool_result'].includes(name)) {
+              await guard();
+              let result: any = {error:'tool_not_allowed'};
+              if (name === 'read_tool_result' && session.offered(name)) result = await resultFiles.read(args);
+              else if (name === 'store_tool_result' && session.offered(args?.name)) result = resultFiles.preserve(args.value,args.name);
+              else if (name === 'store_command_result' && session.offered('run_command') && /^[a-f0-9]{48}$/.test(args?.output_id ?? '')) {
+                result=await resultFiles.run(()=>commandResult({...args.preview,truncated:true,output_file:'journal'},'pi:'+args.output_id,
+                  offset=>workspace.deliver({type:'workspace_agent_result',request_id:args.output_id,offset})),true);
+              }
+              await guard();
+              await deliverMailboxToolReply(redactor.clean(result), id, chunk => workspace.deliver(chunk), '发送完整工具结果时中断。');
+              return;
+            }
             if (kind === 'control' || (config.control_tools || []).includes(name)) {
               const allowed = session.control && session.offered(name) && (config.control_tools || []).includes(name) && (!finalizing || finishingNames.has(name));
               const reply = allowed ? await abortable(session.control!(name, args, { id, token: toolRequest?.token })) : { result: { error: 'tool_not_allowed' } };
@@ -234,7 +252,7 @@ export function piAdapter<T>(session: PiSession<T>) {
             const offered = session.offered(name);
             let result: any;
             if (session.platform && Object.hasOwn(session.platform, name)) result = offered ? await abortable(session.platform[name]!(id, args)) : { error: 'write_not_allowed' };
-            else result = !offered || !session.repository ? { error: 'tool_not_allowed' } : await abortable(session.repository(name, args));
+            else result = !offered || !session.repository ? { error: 'tool_not_allowed' } : await resultFiles.execute(name,args,()=>abortable(session.repository!(name,args)));
             await deliverMailboxToolReply(redactor.clean(result), id, chunk => workspace.deliver(chunk), '发送仓库读取结果时中断。');
           });
         }

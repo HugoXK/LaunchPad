@@ -54,6 +54,7 @@ import { ChannelConnections } from './channels/connections.js';
 import { ScheduleService } from './schedules/service.js';
 import { Scheduler } from './schedules/worker.js';
 import { registerScheduledChecks } from './dispatch/schedule.js';
+import { migrateDailyReports } from './schedules/migration.js';
 import type { StallMonitor } from './core/stalls.js';
 import { loginBucket } from './core/client-address.js';
 import { AssistantComputerService, assistantComputersApi } from './service-roles/assistant-computers.js';
@@ -141,6 +142,9 @@ export function createControlPlane(options: Options, security: { trustedProxies?
   options.onChannels?.(channels);
   const schedules = new ScheduleService(store, sharedManagement, channels, options.schedules?.clock);
   registerScheduledChecks(schedules);
+  // Daily report plans move to their chats' timers once (#1027); the report stays readable per project.
+  for (const row of migrateDailyReports(schedules)) console.log(`[schedules] daily report plan ${row.schedule_id} (project ${row.project_id}): ${row.outcome}`
+    + (row.channel_schedule_id ? ` to ${row.chat_type} timer ${row.channel_schedule_id}` : '') + (row.reason ? ` (${row.reason})` : ''));
   const scheduler = new Scheduler(schedules); options.onSchedules?.(scheduler);
   const removal = new ProjectRemoval(store, options.installations, options.projects, options.engine);
   const storage = options.storage ?? new StorageReport(store, options.projects?.manager);
@@ -276,7 +280,7 @@ export function createControlPlane(options: Options, security: { trustedProxies?
       '/access.css': ['access.css', 'text/css'],
       '/workspace.js': ['workspace.js', 'text/javascript'], '/workspace.css': ['workspace.css', 'text/css'],
       '/task-create.js': ['task-create.js', 'text/javascript'], '/task-create.css': ['task-create.css', 'text/css'],
-      '/shell.js': ['shell.js', 'text/javascript'], '/shell.css': ['shell.css', 'text/css'], '/models.css': ['models.css', 'text/css'], '/management.css': ['management.css', 'text/css'], '/vendor/marked.js': ['../node_modules/marked/lib/marked.umd.js', 'text/javascript'], '/vendor/purify.js': ['../node_modules/dompurify/dist/purify.min.js', 'text/javascript'],
+      '/scope-picker.js': ['scope-picker.js', 'text/javascript'], '/shell.js': ['shell.js', 'text/javascript'], '/shell.css': ['shell.css', 'text/css'], '/models.css': ['models.css', 'text/css'], '/management.css': ['management.css', 'text/css'], '/vendor/marked.js': ['../node_modules/marked/lib/marked.umd.js', 'text/javascript'], '/vendor/purify.js': ['../node_modules/dompurify/dist/purify.min.js', 'text/javascript'],
       '/docs/external-token-api.md': ['../docs/external-token-api.md', 'text/plain'], '/favicon.ico': ['favicon.ico', 'image/x-icon'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'] };
     if (method === 'GET' && assets[path]) {
       const [name, mime] = assets[path]; const bytes = await readStaticAsset(options.staticDirectory, name);

@@ -1,36 +1,29 @@
+import { storageFootprint, managerLocations } from './storage-footprint.mjs';
+import { computerResultOwner } from '../runner/result-owner.mjs';
+import { lstat } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { rm } from 'node:fs/promises';
 import { randomBytes, createHash } from 'node:crypto';
 import { ManagerError } from './docker.mjs';
+import { collectDockerUsage, readDockerContainers, readDockerVolumes } from './docker-usage.mjs';
 import { Notes, noteName } from '../runner/notes.mjs';
 import { FileTree } from './file-tree.mjs';
 import { validNoteId } from '../runner/note-catalog.mjs';
 import { LedgerMigration, Trajectories, TrajectoryExpiry, inputHeader, trajectoryStorage } from './trajectories.mjs';
 import { DiskGuard } from './disk.mjs';
 import { IncrementalVacuum } from './compaction.mjs';
-import { normalizePolicy, sanitizeBrowserTrajectory } from '../runner/browser-policy.mjs';
+import { isCleanupCall, validateCall } from './project-runner-calls.mjs';
+import { sanitizeBrowserTrajectory } from '../runner/browser-policy.mjs';
+
+export { validateCall };
 
 const randomId = () => randomBytes(24).toString('hex');
 // One line on stderr per failure that changes a computer's state, so `docker compose logs manager` says why it happened.
 export function logFailure(what, error) {
   const reason = error instanceof ManagerError ? error.message + (error.detail ? ` (${error.detail})` : '') : error?.stack || String(error);
   console.error(`[manager] ${what}: ${reason}`);
-}
-// A size Docker did not report is not a measured zero: a missing field, moby's `-1`, or anything that is not a number
-// means that kind of usage is unknown, so its total stays null (the page lists it as not measured) while the count still
-// says how many rows were looked at. Summing a missing row as 0 would show a short number as complete.
-function measuredBytes(rows, size) {
-  let total = 0;
-  for (const row of rows) {
-    const value = size(row);
-    if (value === undefined || value === null) return null;
-    const bytes = Number(value);
-    if (!Number.isFinite(bytes) || bytes < 0) return null;
-    total += bytes;
-  }
-  return total;
 }
 // Default project computer spec and the bounds the manager enforces; callers can only choose values inside them.
 // The resource values are the built-in defaults: a super administrator replaces them in the global settings, and every
@@ -66,8 +59,6 @@ export function validateSpec(input) {
 const digest = value => createHash('sha256').update(value).digest('hex');
 const commandTypes = ['command', 'workspace_command'];
 export const parallelBounds = [1, 32];
-const runnerTypes = ['command','read','write','workspace_init','workspace_acceptance','workspace_source','workspace_restore','workspace_integrate','workspace_integration_check','workspace_checkout','workspace_advance','workspace_context','git_have','git_pack','git_import','git_export','workspace_write','workspace_snapshot','workspace_read','workspace_export','workspace_command','workspace_browser','workspace_finalize','workspace_blob','workspace_worktree_create','workspace_worktree_bind','workspace_worktree_inspect','workspace_agent_history','workspace_agent_session','workspace_agent_boundary','workspace_agent_continue','workspace_agent_config','workspace_agent_start','workspace_agent_poll','workspace_agent_reply','workspace_agent_progress','workspace_agent_token','workspace_agent_tool','workspace_agent_model_request','workspace_agent_model_reply','workspace_agent_live','workspace_agent_runtime','workspace_harness_config','workspace_harness_start','workspace_harness_stdin','workspace_harness_poll','workspace_harness_interrupt','reap','tasks_list','tasks_remove','worktrees_list','worktrees_remove'];
-const runnerKeys = ['type','command','path','content','timeout_ms','keep_background','workspace_id','source_workspace_id','worktree_id','worktree_ids','on_changes','base_tree','base64','offset','author_email','final','mode','grace_ms','instance_id','wait_ms','known_tool_ids','known_token_ids','known_model_ids','snapshot','sha','tree_sha','config','request_id','sequence','idle','pack_id','commits','entries','status','headers','error','action','args','policy','url','name','selector','text','label'];
 const RUN_TOKEN_PATTERN = /\brrt_[A-Za-z0-9_-]{12}\.[A-Za-z0-9_-]{43}\b/g;
 function sanitizeTrajectoryValue(value) {
   if (typeof value === 'string') return value.includes('rrt_') ? value.replace(RUN_TOKEN_PATTERN, '[redacted:run_token]') : value;
@@ -80,72 +71,30 @@ function sanitizeTrajectoryValue(value) {
   }
   return out;
 }
-function sanitizeTrajectoryInput(input) {
-  if (input?.request && ['workspace_harness_config', 'workspace_agent_token'].includes(input.request.type) && typeof input.request.base64 === 'string') {
+export function sanitizeTrajectoryInput(input) {
+  if (input?.request && ['workspace_harness_config', 'workspace_agent_token', 'workspace_agent_config'].includes(input.request.type) && typeof input.request.base64 === 'string') {
     return sanitizeTrajectoryValue({ ...input, request: { ...input.request, base64: '[redacted]' } });
   }
   if (input?.request?.type === 'workspace_browser') return sanitizeBrowserTrajectory(sanitizeTrajectoryValue(input));
   return sanitizeTrajectoryValue(input);
 }
-// The control plane's workspace cleanup: list the task directories or shared worktrees, remove a few of them per call
-// (runner/task-dirs.mjs).
-const cleanupTypes = ['tasks_list', 'tasks_remove', 'worktrees_list', 'worktrees_remove'];
 // WAL files keep the largest size they ever reached; after a checkpoint resets the log, SQLite truncates it to this.
 // The control plane uses the same limit (src/storage/database.ts).
 export const walSizeLimit = 512 * 1024 * 1024;
-function validIdArray(value) {
-  return Array.isArray(value) && value.length <= 512 && value.every(id => typeof id === 'string' && /^[a-f0-9]{48}$/.test(id));
-}
-// A runner request is checked before it can touch the computer, so a malformed one never interrupts other tasks.
-function validateBrowserCall(call) {
-  const actions = ['open', 'see', 'click', 'type', 'screenshot', 'close'];
-  if (!actions.includes(String(call.action || ''))) throw new ManagerError('invalid_runner_request', 400);
-  if (call.action !== 'close' && !normalizePolicy(call.policy)) throw new ManagerError('invalid_runner_request', 400);
-  if (call.args !== undefined && (!call.args || typeof call.args !== 'object' || Array.isArray(call.args))) throw new ManagerError('invalid_runner_request', 400);
-}
-function validateCall(call) {
-  if (!call || !runnerTypes.includes(call.type) || Object.keys(call).some(k => !runnerKeys.includes(k))) throw new ManagerError('invalid_runner_request', 400);
-  if (call.type === 'workspace_browser') validateBrowserCall(call);
-  if (call.workspace_id !== undefined && !/^[a-f0-9]{48}$/.test(call.workspace_id) || call.idle !== undefined && call.idle !== true) throw new ManagerError('invalid_runner_request', 400);
-  // The three-way integration the control plane starts when a branch fell behind main names the workspace it integrates
-  // from (src/tasks/integration.ts:52); runner/workspace.mjs refuses a snapshot without a 40-hex sha, tree and base tree
-  // and a source other than its own workspace, so the manager refuses it before the call reaches the computer.
-  // An observer's or evaluator's worktree (#769) may name the task directory whose context it copies.
-  const sourced = ['workspace_acceptance','workspace_restore','workspace_integrate'], mayName = [...sourced, 'workspace_worktree_create', 'workspace_worktree_bind'];
-  if (call.source_workspace_id !== undefined && (!mayName.includes(call.type) || !/^[a-f0-9]{48}$/.test(call.source_workspace_id))) throw new ManagerError('invalid_runner_request', 400);
-  if (sourced.includes(call.type) && !/^[a-f0-9]{48}$/.test(call.source_workspace_id || '')) throw new ManagerError('invalid_runner_request', 400);
-  if (call.type === 'workspace_integrate' && (![call.sha,call.tree_sha,call.base_tree].every(value => /^[a-f0-9]{40}$/.test(value || '')) || call.source_workspace_id === call.workspace_id)) throw new ManagerError('invalid_runner_request', 400);
-  // A shared worktree (#769) is named only by the calls that create or bind it, by its 48-hex id.
-  const worktreeCalls = ['workspace_worktree_create', 'workspace_worktree_bind'];
-  if (worktreeCalls.includes(call.type) !== (call.worktree_id !== undefined) || call.worktree_id !== undefined && !/^[a-f0-9]{48}$/.test(call.worktree_id)) throw new ManagerError('invalid_runner_request', 400);
-  // Taking a worktree with changes or at another commit is a choice the call names; listing names at most 30 worktrees.
-  if (call.on_changes !== undefined && (call.type !== 'workspace_worktree_bind' || !['reset', 'keep_changes'].includes(call.on_changes))) throw new ManagerError('invalid_runner_request', 400);
-  if ((call.type === 'workspace_worktree_inspect') !== (call.worktree_ids !== undefined) || call.worktree_ids !== undefined && (!validIdArray(call.worktree_ids) || call.worktree_ids.length > 30)) throw new ManagerError('invalid_runner_request', 400);
-  if (call.timeout_ms != null && !(Number.isFinite(call.timeout_ms) && call.timeout_ms > 0)) throw new ManagerError('invalid_runner_request', 400);
-  if (call.grace_ms != null && !(Number.isSafeInteger(call.grace_ms) && call.grace_ms > 0)) throw new ManagerError('invalid_runner_request', 400);
-  if (call.instance_id !== undefined && !/^[a-f0-9]{48}$/.test(call.instance_id)) throw new ManagerError('invalid_runner_request', 400);
-  if (call.wait_ms !== undefined && !(Number.isSafeInteger(call.wait_ms) && call.wait_ms >= 0 && call.wait_ms <= 1000)) throw new ManagerError('invalid_runner_request', 400);
-  for (const key of ['known_tool_ids', 'known_token_ids', 'known_model_ids']) {
-    if (call[key] !== undefined && !validIdArray(call[key])) throw new ManagerError('invalid_runner_request', 400);
-  }
-  // A cleanup call names task directories only by their ids, at most 20 at a time, and carries nothing else.
-  if (cleanupTypes.includes(call.type) ? Object.keys(call).some(k => !['type', 'entries'].includes(k)) || (call.type.endsWith('_list') ? call.entries !== undefined
-    : !Array.isArray(call.entries) || !call.entries.length || call.entries.length > 20 || call.entries.some(entry => !entry || typeof entry !== 'object'
-      || Object.keys(entry).some(k => !['name', 'active_at'].includes(k)) || !/^[a-f0-9]{48}$/.test(entry.name) || !Number.isSafeInteger(entry.active_at) || entry.active_at < 0))
-    : call.entries !== undefined) throw new ManagerError('invalid_runner_request', 400);
-}
+
 export class Projects {
-  constructor({ database, docker, deployment, image, egress = true, tools = '/opt/agent-tools' }) {
+  constructor({ database, docker, deployment, image, egress = true, tools = '/opt/agent-tools', results = null }) {
     // background: repository -> task workspaces whose kept processes may outlive a command.
     // gates: repository -> runner calls running now, whether a lifecycle action holds the computer, and who waits.
     // restarting: computers with a restart queued under the exclusive lock (restartAlone).
-    this.egress = egress; this.toolsMount = tools; this.background = new Map(); this.usage = new Map(); this.gates = new Map(); this.pending = new Set(); this.restarting = new Set();
+    this.resultsMount = results; this.egress = egress; this.toolsMount = tools; this.background = new Map(); this.usage = new Map(); this.gates = new Map(); this.pending = new Set(); this.restarting = new Set();
     // pruned: when each computer's journal was last pruned; pruning: computers with a prune running now.
     this.pruned = new Map(); this.pruning = new Set();
     // scanning: the work volume scan running now (one computer at a time); dockerUsageAt: when Docker's usage was read.
     this.scanning = null; this.dockerUsageAt = 0;
     mkdirSync(dirname(database), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(database); this.docker = docker; this.deployment = deployment; this.image = image;
+    this.databasePath = database;
     this.notesRoot = dirname(database) + '/project-notes';
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000; PRAGMA journal_size_limit=${walSizeLimit};
       CREATE TABLE IF NOT EXISTS projects(repository_id TEXT PRIMARY KEY,generation INTEGER NOT NULL,state TEXT NOT NULL,desired TEXT NOT NULL,error TEXT,started_at TEXT);
@@ -417,6 +366,17 @@ export class Projects {
     if (!volume || !trusted) throw new ManagerError('agent_tools_volume_invalid', 503);
     return name;
   }
+  async resultMount(owner) {
+    if (!this.resultsMount) return [];
+    if (!/^[a-z]+-[a-f0-9]{64}$/.test(owner)) throw new ManagerError('tool_result_owner_invalid', 400);
+    const name = await this.docker.volumeName(this.resultsMount);
+    if (!name) throw new ManagerError('tool_result_volume_missing', 503);
+    const volume = await this.docker.request('GET', '/volumes/' + encodeURIComponent(name));
+    if (!volume || !(volume.Labels?.['com.docker.compose.volume'] === 'tool-results' || volume.Labels?.['department.bot.kind'] === 'tool-results')) throw new ManagerError('tool_result_volume_invalid', 503);
+    const info = await lstat(this.resultsMount + '/' + owner).catch(() => null);
+    if (!info?.isDirectory()) throw new ManagerError('tool_result_directory_missing', 503);
+    return [{ Type: 'volume', Source: name, Target: '/results', ReadOnly: true, VolumeOptions: { NoCopy: true, Subpath: owner } }];
+  }
   async inspect(repo, generation, kind) {
     if (!this.db.prepare('SELECT 1 FROM resources WHERE repository_id=? AND generation=?').get(repo, generation)) throw new ManagerError('unregistered_resource');
     const name = this.names(repo, generation)[kind];
@@ -454,6 +414,7 @@ export class Projects {
     await this.inspect(repo, generation, 'volume');
     await this.notesVolume(repo);
     const toolsVolume = await this.agentToolsVolume();
+    const resultMounts = await this.resultMount(computerResultOwner('project',repo));
     let network = await this.inspect(repo, generation, 'network'), container = await this.inspect(repo, generation, 'container');
     // A container whose template or spec differs (approved image, init, resources, network policy) is replaced in place when
     // provisioned; the work volume and generation stay. This never happens in the middle of a command.
@@ -468,7 +429,7 @@ export class Projects {
     if (container && (container.Image !== approved.Id || host?.Init !== true || networkStale || envStale || host?.Memory !== memory || host?.MemorySwap !== memory
       || host?.NanoCpus !== Math.round(spec.cpus * 1e9) || host?.PidsLimit !== spec.pids || host?.Tmpfs?.['/tmp'] !== tmpfs
       || !host?.Mounts?.some(m => m.Type === 'volume' && m.Source === this.notesName(repo) && m.Target === '/workspace/project-notes' && !m.ReadOnly)
-      || toolsMountStale)) {
+      || toolsMountStale || (host?.Mounts?.filter(m => m.Target === '/results').length ?? 0) !== resultMounts.length || resultMounts.some(expected => !host?.Mounts?.some(m => m.Target === '/results' && m.Type === expected.Type && m.Source === expected.Source && m.ReadOnly === true && m.VolumeOptions?.Subpath === expected.VolumeOptions.Subpath)))) {
       if (container.State.Running) await this.docker.request('POST', `/containers/${names.container}/stop?t=2`);
       await this.docker.request('DELETE', `/containers/${names.container}?force=true`); container = null;
     }
@@ -481,6 +442,7 @@ export class Projects {
         { Type: 'volume', Source: names.volume, Target: '/workspace' },
         { Type: 'volume', Source: this.notesName(repo), Target: '/workspace/project-notes', ReadOnly: false },
         ...(toolsVolume ? [{ Type: 'volume', Source: toolsVolume, Target: '/opt/agent-tools', ReadOnly: true }] : []),
+        ...resultMounts,
       ];
       await this.docker.request('POST', `/containers/create?name=${names.container}`, { Image: resource.image, User: '10001:10001', WorkingDir: '/workspace',
         Cmd: ['node', '/opt/runner/idle.mjs'], Env: env, Labels: this.labels(repo, generation, 'container'),
@@ -523,15 +485,17 @@ export class Projects {
       || now - Date.parse(last.get(p.repository_id).scanned_at) >= (this.scanIntervalMs ?? 6 * 3600_000));
     if (!due) return;
     const repo = due.repository_id, generation = due.generation;
-    this.scanning = repo;
+    this.scanning = repo; this.scanInvalidated = false;
     void this.docker.runner(this.names(repo, generation).container, { operation_id: randomId(), type: 'storage_scan' }, 0)
       .then(answer => {
+        if (this.scanInvalidated) return;
         // A failed scan is retried at the next interval, like a successful one, rather than every few seconds.
         const result = answer?.ok ? answer.result : { scanned_at: new Date().toISOString(), error: answer?.error || 'storage_scan_failed' };
         if (!answer?.ok) logFailure(`project ${repo} storage scan failed`, answer?.error || 'no detail');
         this.db.prepare(`INSERT INTO computer_storage VALUES(?,?,?,?) ON CONFLICT(repository_id) DO UPDATE SET generation=excluded.generation,
           scanned_at=excluded.scanned_at,result=excluded.result`).run(repo, generation, new Date().toISOString(), JSON.stringify(result));
       }, error => {
+        if (this.scanInvalidated) return;
         logFailure(`project ${repo} storage scan failed`, error);
         this.db.prepare(`INSERT INTO computer_storage VALUES(?,?,?,?) ON CONFLICT(repository_id) DO UPDATE SET generation=excluded.generation,
           scanned_at=excluded.scanned_at,result=excluded.result`).run(repo, generation, new Date().toISOString(), JSON.stringify({ error: error instanceof ManagerError ? error.message : 'storage_scan_failed' }));
@@ -544,39 +508,28 @@ export class Projects {
   //
   // Images and the build cache come from one quick /system/df (#671); the containers are asked for on their own (#680),
   // because Docker sizes a container's writable layer by walking it, and a host with a slow or stuck container must not
-  // cost the other two rows their numbers. Volumes are not read at all: /system/df lists every volume, including the
-  // bot-data, manager-data, assistant-homes and *-work ones whose bytes the table already counts as a computer, a
-  // database or "other", so adding them would count the same bytes twice.
+  // cost the other two rows their numbers. The volumes are a third read of their own (#968): most of them hold bytes the
+  // storage table already counts as a database, a trajectory directory or a project computer, and the assistant HOME gets
+  // a row of its own instead of sitting in "other".
   async readDockerUsage(now = Date.now()) {
     if (now - this.dockerUsageAt < 30 * 60_000) return;
     this.dockerUsageAt = now;
     try {
-      const df = await this.docker.request('GET', '/system/df?type=image&type=build-cache');
-      const rows = value => Array.isArray(value) ? value : [];
-      const images = rows(df?.Images), cache = rows(df?.BuildCache);
-      // Docker reports the layers' own total; without it the listed image sizes add up, as long as each one is known.
-      const layers = df?.LayersSize, layersBytes = layers === undefined || layers === null || !Number.isFinite(Number(layers)) || Number(layers) < 0
-        ? measuredBytes(images, row => row?.Size) : Number(layers);
-      // An image no container uses can be removed; its layers shared with images in use stay, so that part is not counted.
-      const unused = images.filter(image => image.Containers === 0);
-      const usage = { read_at: new Date(now).toISOString(),
-        images: { count: images.length, bytes: layersBytes, unused_count: unused.length,
-          reclaimable_bytes: unused.reduce((total, image) => total + Math.max(0, (Number(image.Size) || 0) - Math.max(0, Number(image.SharedSize) || 0)), 0) },
-        // A container takes its writable layer (SizeRw), not its whole filesystem (SizeRootFs), which is mostly its image.
-        // A container read that failed leaves this kind null (not measured), while the two rows that did answer stand.
-        containers: await this.readContainers().catch(error => { logFailure('reading Docker container usage failed', error); return null; }),
-        build_cache: { count: cache.length, bytes: measuredBytes(cache, row => row?.Size), reclaimable_bytes: measuredBytes(cache.filter(row => !row.InUse && !row.Shared), row => row?.Size) } };
+      // Keep the reader entry points overridable; polling state and persisted snapshots stay on Projects.
+      const usage = await collectDockerUsage({ docker: this.docker,
+        readContainers: () => this.readContainers(), readVolumes: () => this.readVolumes(), logFailure }, now);
       this.db.prepare("INSERT INTO settings VALUES('docker_usage',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify(usage));
     } catch (error) { logFailure('reading Docker disk usage failed', error); }
   }
-  // The containers' writable layers, in a request of their own with a limit long enough for a host whose layers are slow
-  // to walk: the default 90 s of request() was shared with the image and build-cache read, so one slow container emptied
-  // every Docker row (#680). Docker answers `Containers` for this type; the other lists stay empty.
-  async readContainers() {
-    const df = await this.docker.request('GET', '/system/df?type=container', undefined, false, 5 * 60_000);
-    const containers = Array.isArray(df?.Containers) ? df.Containers : [];
-    return { count: containers.length, bytes: measuredBytes(containers, row => row?.SizeRw) };
+  refreshFootprint(now = Date.now()) {
+    if (!this.readingFootprint && (!this.footprint || now - Date.parse(this.footprint.measured_at) >= 3600_000)) {
+      this.readingFootprint = storageFootprint(this.databasePath, managerLocations(this.databasePath))
+        .then(result => { this.footprint = result; }).finally(() => { this.readingFootprint = null; });
+    }
+    return this.readingFootprint;
   }
+  async readContainers() { return readDockerContainers(this.docker); }
+  async readVolumes() { return readDockerVolumes(this.docker); }
   // The approved image, or one derived from it with the project's system packages. Built once per package set and base image,
   // and only by the manager: apt runs as root at build time, nothing inside the computer needs root.
   async resolveImage(repo, spec) {
@@ -776,6 +729,12 @@ export class Projects {
             const request = command ? { ...call, timeout_ms: limit } : call,
               timeout = command ? (limit === null ? 0 : limit + 60000) : call.type === 'workspace_browser' ? (Number(call.timeout_ms) > 0 ? Number(call.timeout_ms) + 120000 : 180000) : ['workspace_acceptance','workspace_restore','workspace_snapshot','workspace_finalize','workspace_blob','workspace_checkout','workspace_advance','workspace_worktree_create','workspace_worktree_bind','git_import','tasks_remove','worktrees_remove'].includes(call.type) ? 0 : ['tasks_list','worktrees_list'].includes(call.type) ? 300000 : 90000;
             result = await this.docker.runner(this.names(repo, project.generation).container, { ...request, operation_id: input.operation_id }, timeout);
+            if (['tasks_remove', 'worktrees_remove'].includes(call.type) && result.ok && result.result?.removed?.length) {
+              // Exclude the pre-cleanup total until the next background check scans the volume.
+              // A scan already in flight may have visited the deleted directories too.
+              if (this.scanning === repo) this.scanInvalidated = true;
+              this.db.prepare('DELETE FROM computer_storage WHERE repository_id=? AND generation=?').run(repo, project.generation);
+            }
             if (commandTypes.includes(call.type)) {
               if (call.type === 'workspace_command' && call.keep_background === true && result.ok) kept.add(call.workspace_id);
               // Processes that escaped a task command's process group end here, unless the task keeps background work; the
@@ -845,7 +804,7 @@ export class Projects {
         }
         // Listing or removing task directories starts no project process, and a removal that goes on after a lost answer
         // deletes only what it was sent: the call fails, and the computer and the tasks on it keep running.
-        if (action === 'execute' && cleanupTypes.includes(input.request.type)) {
+        if (action === 'execute' && isCleanupCall(input.request.type)) {
           logFailure(`project ${repo} ${input.request.type} failed`, error);
           this.db.prepare("UPDATE operations SET state='interrupted' WHERE id=?").run(input.operation_id); throw error;
         }
@@ -890,7 +849,7 @@ export class Projects {
   // Liveness check of idle computers only: one with runner calls in flight is skipped rather than queued behind them.
   async check() {
     for (const row of this.list()) if (['ready', 'busy'].includes(row.state)) this.prune(row.repository_id);
-    this.scanStorage(); void this.readDockerUsage();
+    this.scanStorage(); void this.readDockerUsage(); void this.refreshFootprint();
     await Promise.all(this.list().filter(p => p.state === 'ready' && !this.gates.has(p.repository_id)).map(row => this.lock(row.repository_id, async () => {
       const current = this.get(row.repository_id); if (current.state !== 'ready') return;
       try {
@@ -916,10 +875,10 @@ export class Projects {
     let wal = 0; try { wal = statSync(data + '/manager.sqlite-wal').size; } catch {}
     // The last scan of each computer's work volume, and Docker's images, containers and build cache, as the background work
     // left them.
-    const computers = this.db.prepare('SELECT repository_id,generation,scanned_at,result FROM computer_storage').all().map(row => ({ ...row, result: JSON.parse(row.result) }));
+    const computers = this.db.prepare('SELECT s.repository_id,s.generation,s.scanned_at,s.result FROM computer_storage s JOIN projects p ON p.repository_id=s.repository_id AND p.generation=s.generation WHERE p.state<>\'deleted\'').all().map(row => ({ ...row, result: JSON.parse(row.result) }));
     const docker = JSON.parse(this.db.prepare("SELECT value FROM settings WHERE key='docker_usage'").get()?.value ?? 'null');
     const compaction = JSON.parse(this.db.prepare("SELECT value FROM settings WHERE key='compaction'").get()?.value ?? 'null');
-    return { usage: [...usage, ...open.values()], database: { bytes: pageSize * pages, pages, page_size: pageSize, free_pages: free, free_bytes: pageSize * free, wal_bytes: wal, auto_vacuum: value('auto_vacuum') },
+    return { footprint: this.footprint ?? null, workspace_projects: this.db.prepare("SELECT DISTINCT r.repository_id FROM resources r JOIN projects p ON p.repository_id=r.repository_id AND p.generation=r.generation WHERE p.state<>'deleted'").all().map(row => row.repository_id), usage: [...usage, ...open.values()], database: { bytes: pageSize * pages, pages, page_size: pageSize, free_pages: free, free_bytes: pageSize * free, wal_bytes: wal, auto_vacuum: value('auto_vacuum') },
       disk: this.disk.check(), migration: this.migration.state(), expiry: this.expiry.state(), computers, docker, compaction, vacuum: this.vacuum.state() };
   }
   /** Saves the expiry window in days (1–365); the next expiry pass uses it. */

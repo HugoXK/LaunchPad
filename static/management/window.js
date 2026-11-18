@@ -1,9 +1,5 @@
 // One authenticated chat surface survives page navigation. Minimizing it never cancels a submitted command.
 let managementChat = null;
-// #623: a picker change can arrive while a panel is still connecting, before it has a client to forward the change to.
-// Remember it on that one chat, so the connection that finishes afterwards replays it instead of keeping the scope the
-// render began with.
-const pendingScopeChange = new WeakMap();
 // #481: the phone's bottom bar is the assistant's only entry point, so it reads the same state the floating
 // launcher shows on wide screens instead of keeping a second copy of it.
 function managementChatState() {
@@ -29,13 +25,15 @@ function syncManagementChat() {
   resize.setAttribute('aria-label', '调整管理助手窗口大小'); resize.title = '拖动左上角调整大小；方向键微调';
   const panel = element('div', '', 'management-panel'); box.append(resize, head, panel);
   const launcher = button('', () => openManagementChat(), 'management-launcher'); launcher.id = 'management-launcher';
-  launcher.setAttribute('aria-controls', box.id); launcher.setAttribute('aria-expanded', 'false'); launcher.setAttribute('aria-label', '打开管理助手');
+  // #914: no aria-label — the launcher's name is the text it already shows (管理助手 + its state), so voice control and
+  // screen readers say the same words the reader sees, in all three states.
+  launcher.setAttribute('aria-controls', box.id); launcher.setAttribute('aria-expanded', 'false');
   const icon = element('span', '✦', 'management-launcher-icon'); icon.setAttribute('aria-hidden', 'true');
   const label = element('span', '', 'management-launcher-label'), state = element('small', '随时唤起');
   label.append(element('strong', '管理助手'), state); launcher.append(icon, label);
   document.body.append(box, launcher);
   const chat = managementChat = { user: me.id, window: box, launcher, panel, state, minimize, maximize, resize, client: null, loading: null, openVersion: 0, active: false, unread: false,
-    mode: 'floating', fullscreenFrom: 'floating', returnAddress: '#/projects', requestedProject: null, size: { width: 480, height: 740 } };
+    mode: 'floating', fullscreenFrom: 'floating', returnAddress: '#/projects', size: { width: 480, height: 740 } };
   try { const saved = JSON.parse(localStorage.getItem('management-window-size:' + chat.user)); if (saved && Number.isFinite(saved.width) && Number.isFinite(saved.height)) chat.size = saved; } catch { /* Use the default size when storage is unavailable. */ }
   const header = document.querySelector('body > header');
   const updateViewport = () => {
@@ -49,6 +47,8 @@ function syncManagementChat() {
   chat.updateViewport = updateViewport;
   const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(updateViewport) : null;
   if (header) observer?.observe(header);
+  const scopeBar = document.getElementById('console-mobile-scope');
+  if (scopeBar) observer?.observe(scopeBar);
   window.addEventListener('resize', updateViewport);
   chat.cleanup = () => { observer?.disconnect(); window.removeEventListener('resize', updateViewport); };
   resize.addEventListener('pointerdown', event => {
@@ -83,6 +83,8 @@ function fitManagementWindow(chat) {
   // covered the bar's 退出登录 / account entry. The box is clamped between the header and the bottom bar instead.
   const margin = innerWidth <= 600 ? 10 : 24;
   const header = document.querySelector('body > header')?.getBoundingClientRect().height || 0;
+  const scopeBar = document.getElementById('console-mobile-scope');
+  const scopeBottom = scopeBar && getComputedStyle(scopeBar).display !== 'none' ? scopeBar.getBoundingClientRect().bottom : 0;
   const bar = document.querySelector('.console-mobile-nav');
   // The bar is measured as it is right now: shell.css hides it only on a short phone (≤767x560) while the floating panel
   // is up, and that is why the fit below runs again once the window is visible (#641 F5).
@@ -90,7 +92,8 @@ function fitManagementWindow(chat) {
   // A short viewport keeps the panel under the header and above the bar even when that leaves little height: at
   // 250% zoom (768×432 CSS) the panel used to reach 24px and sit 40px under the 64px top bar. The max-height media query
   // already compresses the composer there, so a short box stays usable, while a box over the top bar is not.
-  const room = innerHeight - header - barHeight - margin * 2;
+  // The mobile scope switcher remains reachable while the assistant floats over another page.
+  const room = innerHeight - Math.max(header, scopeBottom) - barHeight - margin * 2;
   const maxWidth = Math.max(1, innerWidth - margin * 2), maxHeight = Math.max(1, room);
   const width = Math.max(Math.min(360, maxWidth), Math.min(chat.size.width, maxWidth)), height = Math.max(Math.min(460, maxHeight), Math.min(chat.size.height, maxHeight));
   chat.window.style.width = Math.round(width) + 'px'; chat.window.style.height = Math.round(height) + 'px';
@@ -132,6 +135,7 @@ function toggleManagementFullscreen() {
 async function openManagementPage(projectId = null) {
   if (typeof confirmKnowledgeLeave === 'function' && !await confirmKnowledgeLeave()) return;
   syncManagementChat(); const chat = managementChat; if (!chat) return;
-  if (location.hash !== '#/management') { chat.returnAddress = location.hash || '#/projects'; history.pushState(null, '', '#/management'); }
-  chat.requestedProject = projectId; await route();
+  const address = consolePageAddress('management', projectId);
+  if (location.hash !== address) { chat.returnAddress = location.hash || '#/projects'; history.pushState(null, '', address); }
+  await route();
 }

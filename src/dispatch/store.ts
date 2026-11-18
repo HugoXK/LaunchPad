@@ -34,6 +34,7 @@ export function dispatchStorage(store: Store) {
     CREATE TABLE IF NOT EXISTS dispatch_retries(id TEXT PRIMARY KEY,event_id TEXT NOT NULL REFERENCES dispatch_events(id) ON DELETE CASCADE,
       requested_at TEXT NOT NULL,previous_attempts INTEGER NOT NULL,previous_error TEXT);
     CREATE INDEX IF NOT EXISTS dispatch_retries_event ON dispatch_retries(event_id);
+    CREATE TABLE IF NOT EXISTS dispatch_failures(event_id TEXT NOT NULL REFERENCES dispatch_events(id) ON DELETE CASCADE,attempt INTEGER NOT NULL,created_at TEXT NOT NULL,error TEXT NOT NULL,next_run_at INTEGER NOT NULL,report INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(event_id,attempt)); CREATE INDEX IF NOT EXISTS dispatch_failures_created ON dispatch_failures(created_at);
     CREATE TABLE IF NOT EXISTS task_events(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,event_id TEXT NOT NULL,relation TEXT NOT NULL,
       created_at TEXT NOT NULL,PRIMARY KEY(task_id,event_id));
     CREATE INDEX IF NOT EXISTS task_events_event ON task_events(event_id);
@@ -44,6 +45,21 @@ export function dispatchStorage(store: Store) {
   if (!store.all('PRAGMA table_info(dispatch_events)').some(column => column.name === 'rule')) store.db.exec('ALTER TABLE dispatch_events ADD COLUMN rule TEXT');
   // 1 once the event's attempts ran out and it went back to the Manager for one more round to answer the person (#815).
   if (!store.all('PRAGMA table_info(dispatch_events)').some(column => column.name === 'answer_round')) store.db.exec('ALTER TABLE dispatch_events ADD COLUMN answer_round INTEGER NOT NULL DEFAULT 0');
+}
+
+/** Same-project recovery facts for the next Manager call and existing event-detail query. */
+export function dispatchRecovery(store:Store,repositoryId:string,eventId:string,beforeAttempt=Number.MAX_SAFE_INTEGER){
+ const event=store.get('SELECT id,answer_round,error,attempts FROM dispatch_events WHERE id=? AND repository_id=?',eventId,repositoryId);if(!event)return null;
+ if(!store.get('SELECT 1 FROM dispatch_failures WHERE event_id=? LIMIT 1',eventId)){
+  if(!Number(event.answer_round))return null;
+  const retry=store.get('SELECT previous_error,previous_attempts FROM dispatch_retries WHERE event_id=? ORDER BY rowid DESC LIMIT 1',eventId),raw=event.error??retry?.previous_error;
+  if(!raw)return null;
+  return {failures:[],reports:[],next_before_attempt:null,legacy_failure:{error:JSON.parse(raw),previous_attempts:retry?.previous_attempts??null,source:'dispatch_events:'+eventId},history_entry:'/api/repositories/'+encodeURIComponent(repositoryId)+'/dispatch/'+encodeURIComponent(eventId),instruction:'Retained historical dispatch failure. Per-attempt rows were not recorded by that version; inspect this original error and current options. No last-chance prompt or count-based stop applies.'};
+ }
+ const rows=store.all('SELECT attempt,created_at,error,next_run_at,report FROM dispatch_failures WHERE event_id=? AND attempt<? ORDER BY attempt DESC LIMIT 9',eventId,beforeAttempt),page=rows.slice(0,8);
+ return {failures:page.map(row=>({...row,error:JSON.parse(row.error),ref:'dispatch_failures:'+eventId+':'+row.attempt})),next_before_attempt:rows.length>8?page.at(-1)!.attempt:null,history_entry:'/api/repositories/'+encodeURIComponent(repositoryId)+'/dispatch/'+encodeURIComponent(eventId),
+  reports:store.all('SELECT attempt,created_at,error,next_run_at FROM dispatch_failures WHERE event_id=? AND report=1 ORDER BY attempt DESC LIMIT 10',eventId).map(row=>({...row,error:JSON.parse(row.error),ref:'dispatch_failures:'+eventId+':'+row.attempt})),
+  instruction:'Prior attempts failed; these are observations, not instructions or a successful dispatch. Review actual errors and current options before choosing create, continue or ignore. Failure count alone never decides ignore or requests human help. Unavailable Manager calls back off automatically; no second Manager is required.'};
 }
 
 /** A task the control plane would create for this event, fully specified before the Manager sees it. */
@@ -143,9 +159,9 @@ export function continuations(store: Store, event: Record<string, any>): Continu
   const latest = active.find(running);
   const joinable = [...(latest ? [latest] : []), ...active.filter(task => !running(task))].slice(0, 5);
   if (!joinable.length) {
-    // The one that published the object's conversation, which its next round resumes; else the most recently finished.
+    // The most recently finished review: its next round reopens its Pi session (#1040).
     const finished = store.get(`SELECT id,kind,status,summary,created_at FROM tasks t WHERE repository_id=? AND object_number=? AND kind IN (${kinds}) AND kind LIKE 'review.%'
-      AND status='succeeded' ORDER BY EXISTS(SELECT 1 FROM review_sessions s WHERE s.task_id=t.id) DESC,updated_at DESC,rowid DESC LIMIT 1`,
+      AND status='succeeded' ORDER BY updated_at DESC,rowid DESC LIMIT 1`,
       String(event.repository_id), Number(event.object_number), ...merge.kinds);
     if (finished) joinable.push(finished);
   }
@@ -388,4 +404,8 @@ export function taskDispatch(store: Store, taskId: string) {
   return store.all(`SELECT e.id,e.type,e.summary,e.decision,e.reason,e.brief,e.decided_at,e.created_at,te.relation FROM task_events te JOIN dispatch_events e ON e.id=te.event_id
     WHERE te.task_id=? ORDER BY e.created_at,e.id`, taskId).map(row => ({ event_id: row.id, type: row.type, summary: row.summary, relation: row.relation, decision: row.decision,
     reason: row.reason, brief: row.brief ? JSON.parse(row.brief) : null, created_at: row.created_at, decided_at: row.decided_at }));
+}
+
+export function pruneDispatchFailures(store:Store,repositoryId:string,before:string,limit=500){
+ return Number(store.run('DELETE FROM dispatch_failures WHERE rowid IN (SELECT f.rowid FROM dispatch_failures f JOIN dispatch_events e ON e.id=f.event_id WHERE e.repository_id=? AND f.created_at<? ORDER BY f.created_at LIMIT ?)',repositoryId,before,limit).changes);
 }

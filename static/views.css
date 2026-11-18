@@ -11,6 +11,10 @@ dialog.wide[open]{display:flex;flex-direction:column}
 .task-choice-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px 14px;padding:10px 12px;border:1px solid #dce6eb;border-radius:7px;background:#f7fafb}
 .task-choice-open{justify-self:start;text-align:left;white-space:normal;height:auto;overflow-wrap:anywhere}.task-choice-row .task-metrics{grid-column:1/-1;margin:0}
 .timeline-panel{min-height:0;overflow:auto;padding:14px 18px 20px}.timeline-panel h3,.side-card h3{font-size:var(--font-size-2);margin:0 0 10px;color:var(--color-text)}
+/* #1039: a card title can be an h2; the element name never sets the size, the same tokens and weight do. The
+   console-wide h2 rule (shell.css) is more specific than the UA h2 defaults, so restate the h3 values here. */
+.side-card>h2{font-size:var(--font-size-2);margin:0 0 10px;color:var(--color-text)}
+.console-ready .side-card>h2{font-size:var(--font-size-2);font-weight:700;line-height:normal}
 .task-log-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0}.task-log-controls>p{flex-basis:100%;margin:0}.task-log-controls button{min-height:44px}
 .timeline-panel>.muted{font-size:var(--font-size-label);line-height:1.6}
 .task-side{min-height:0;overflow:auto;padding:14px;background:#f7fafb;border-left:1px solid #e3eaf0;display:flex;flex-direction:column;gap:12px}
@@ -63,21 +67,10 @@ label.check{flex-direction:row;align-items:flex-start;gap:8px;font-size:var(--fo
 /* #707: the project name keeps 16rem; when the header actions do not fit beside it they wrap below instead of squeezing it. */
 .project-head .title-group{flex:1 1 16rem;min-width:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap}.project-head h1{font-size:19px;margin:0;overflow-wrap:anywhere}
 .back-link{flex-basis:100%;font-size:var(--font-size-1);color:var(--color-brand);text-decoration:none}.back-link:hover{text-decoration:underline}
-.project-trail{flex-basis:100%;display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3) var(--space-5)}
-.project-trail .back-link{flex-basis:auto}
 .project-body{display:grid;grid-template-columns:minmax(0,1fr);min-height:calc(100svh - 200px)}
 .project-nav{display:flex;flex-direction:column;gap:2px;padding:12px 8px;border-right:1px solid #e3eaf0;background:#f7fafb}
 .project-nav a{padding:8px 12px;border-radius:5px;color:var(--color-text-muted);text-decoration:none;font-weight:600;font-size:var(--font-size-2)}
 .project-nav a:hover{background:#edf3f5}.project-nav a[aria-current=page]{background:var(--color-brand);color:var(--color-text-inverse)}
-.project-hub{display:flex;flex-direction:column;gap:var(--space-6)}
-.project-hub>h2{margin:0;font-size:var(--font-size-4)}
-.project-hub-group h3{margin:0 0 var(--space-3);font-size:var(--font-size-2);color:var(--color-text-muted)}
-.project-hub-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:var(--space-4)}
-.project-hub-card{display:flex;flex-direction:column;gap:4px;padding:14px 16px;border:1px solid #dde6eb;border-radius:8px;text-decoration:none;color:inherit;background:var(--color-surface)}
-.project-hub-card:hover{border-color:var(--color-brand);background:var(--color-brand-weak)}
-.project-hub-card:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}
-.project-hub-card strong{font-size:var(--font-size-row);color:var(--color-text)}
-.project-hub-card span{font-size:var(--font-size-label);color:var(--color-text-muted)}
 .project-content{padding:var(--space-6);display:flex;flex-direction:column;gap:var(--space-6);min-width:0;max-width:none;width:100%}.project-content>.side-card,.project-content>.card{margin:0}
 .project-content .side-card h3{font-size:var(--font-size-row)}.project-content h4{margin:6px 0 0;font-size:var(--font-size-label);color:var(--color-text)}
 .project-form{gap:10px}.project-form fieldset{border:0;padding:0;margin:0;display:flex;flex-direction:column;gap:10px;min-width:0}
@@ -207,8 +200,16 @@ label.check{flex-direction:row;align-items:flex-start;gap:8px;font-size:var(--fo
 @media(min-width:1280px){
   #settings-panel .global-project-table:not(.is-hidden) .project-list-row{min-height:84px}
   .global-project-table .project-cell:not([data-label="项目"]){flex-wrap:nowrap}
+  /* #978 review: the 看板 cell also carries the row's board switch (static/views/project-list.js:64, a 96px pill), and the
+     nowrap above squeezed the chip into a one-character-per-line column while the switch parked on top of it and
+     covered three characters. This one cell wraps instead: the chip takes the whole column on its first line and the
+     switch sits below, so neither paints over the other. */
+  .global-project-table .project-cell[data-label="看板"]{flex-wrap:wrap}
   .global-project-table .project-cell[data-label="操作"]>.actions{flex-wrap:nowrap}
-  .global-project-table .project-cell .status{white-space:nowrap}
+  /* #978: this table's columns are narrower than the state sentences (门禁 66–96px, 看板 next to its switch), so the
+     base .status nowrap let the shared ellipsis cut「发布检查未完成」to「发布检…」. Chips wrap to another line and the
+     row grows with them; #/projects keeps its own nowrap because that list lays these chips in .project-features. */
+  .global-project-table .project-cell .status{white-space:normal}
 }
 .project-actions-menu{position:static;display:inline-flex;min-width:0}
 .project-actions-toggle{list-style:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:36px;padding:5px 10px;border:1px solid var(--color-border);border-radius:var(--radius-2);background:var(--color-surface);color:var(--color-text);cursor:pointer;font-size:var(--font-size-1);user-select:none}
@@ -301,7 +302,10 @@ dialog.confirm-dialog::backdrop{background:#16374485}
 button.danger{background:#a02b31;border-color:#a02b31;color:#fff}
 @media(max-width:760px){.confirm-head{padding:18px 18px 6px}.confirm-body,.confirm-status{padding-left:18px;padding-right:18px}.confirm-actions{padding:12px 18px}.confirm-actions button{flex:1}}
 /* Global settings: version, deployment-wide defaults and wizard settings side by side, stacking on narrow screens; the shared model list spans the full width. */
-.settings-panel{display:block;padding:0}.settings-panel .side-card h3{font-size:var(--font-size-row)}.settings-panel .settings-wide{grid-column:1/-1}.settings-panel .side-card .flash{margin:0 0 8px}.settings-panel .side-card>form{margin-top:10px}.settings-panel .history .muted{margin:2px 0 0}
+.settings-panel{display:block;padding:0}.settings-panel .side-card h3{font-size:var(--font-size-row)}.settings-panel .side-card>h2{font-size:var(--font-size-row)}
+/* #1039: a sub-section inside a settings card (the rate-limit account names, detail-page sections) is an h3 under the
+   card's h2 but keeps the h4 size, weight and spacing it had, so the outline changes and the pixels do not. */
+.project-content .side-card :is(.card-sub,.rate-account){font-size:var(--font-size-label);margin:6px 0 0;font-weight:700;line-height:normal;color:var(--color-text)}.settings-panel .settings-wide{grid-column:1/-1}.settings-panel .side-card .flash{margin:0 0 8px}.settings-panel .side-card>form{margin-top:10px}.settings-panel .history .muted{margin:2px 0 0}
 
 /* Global settings (static/settings.js): the project page's category layout inside the list card. */
 .settings-body{border-top:1px solid #e3eaf0;min-height:calc(100svh - 170px)}
@@ -491,6 +495,12 @@ button.danger{background:#a02b31;border-color:#a02b31;color:#fff}
 .audit-filters{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}
 .audit-filters button{font-size:var(--font-size-1);padding:4px 10px}
 .audit-filters button[aria-pressed=true]{border-color:var(--color-brand);color:var(--color-brand);background:#e8f3f4}
+/* #698: one audit row reads as a sentence (action · who), then time and the object link; codes fold under 技术信息. */
+.history li.audit-row{display:block;padding:9px 0}
+.audit-row-head{font-size:var(--font-size-row,14px);overflow-wrap:anywhere}.audit-row-head .audit-actor{color:var(--color-text-muted,#4b5563)}
+.audit-row-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin-top:2px}
+.audit-tech{margin-top:2px}.audit-tech>summary{cursor:pointer;color:var(--color-text-muted,#4b5563);font-size:var(--font-size-1)}
+.audit-tech dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 10px;margin:4px 0 0}.audit-tech dt{color:var(--color-text-muted,#4b5563)}.audit-tech dd{margin:0;min-width:0}
 
 /* #564: recommended-config first screen; advanced role details stay folded. */
 .role-advanced { margin-top: var(--space-5, 16px); }

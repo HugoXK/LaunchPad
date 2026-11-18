@@ -12,13 +12,12 @@ const pageTitleKeys = {
 function pageTitleFor(missing, target) {
   if (missing) return t('page.not_found');
   if (target) {
-    // 项目入口 is a project page too, but it is not one of the settings categories the catalog lists.
-    const caption = projectSectionCaption(target.section) || (target.section === 'menu' ? '项目入口' : null);
+    const caption = projectSectionCaption(target.section);
     if (!caption) return t('page.not_found');
     // The heading is only the name of the project the address asks for when that project is the one drawn: a project
     // the reader cannot start or reach leaves the previous page's header in place, and its name is not this page's.
     const rendered = typeof current !== 'undefined' && current && String(current.id) === String(target.id)
-      ? document.querySelector('#project-page .project-head h1')?.textContent.trim() : null;
+      ? current.repository?.full_name : null;
     const project = repositories.find(row => String(row.id) === String(target.id))?.full_name || rendered;
     return project ? `${project} · ${caption}` : caption;
   }
@@ -45,7 +44,7 @@ function setNotFoundTitle(missing) { applyDocumentTitle(missing); }
 // own h1, or the list heading. A page without one falls back to the skip link's target, which is focusable already.
 function pageHeading(target) {
   const shown = el => !!el && !el.closest('[hidden]') && el.getClientRects().length > 0;
-  const candidates = target ? [document.querySelector('#project-page .project-head h1')]
+  const candidates = target && !projectConsoleRoute(target) ? [document.querySelector('#console-project-header .project-head h1'), document.querySelector('#project-page .project-head h1')]
     : [...document.querySelectorAll('#console-page h1, #settings-panel h1, #page-title')];
   const heading = candidates.find(shown);
   if (heading) return heading;

@@ -1,9 +1,13 @@
-import { localCommandResult, readLocalResult, prepareLocalResults } from './tool-results.mjs';
-import {readFile,writeFile,rename,unlink,appendFile} from 'node:fs/promises';
+import {stageSessionSkills} from './session-resources.mjs';
+import {dirname,join,resolve} from 'node:path';
+import {existsSync} from 'node:fs';
+import {startCredentialHelperServer} from './credential-helper.mjs';
+import { localCommandResult, prepareLocalResults } from './tool-results.mjs';
+import {readFile,writeFile,rename,unlink,appendFile,mkdir} from 'node:fs/promises';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
 import {randomBytes} from 'node:crypto';
-import {createAgentSession,createExtensionRuntime,ModelRuntime,SessionManager,SettingsManager,estimateTokens} from '@earendil-works/pi-coding-agent';
+import {createAgentSession,createExtensionRuntime,DefaultResourceLoader,createBashTool,createCodingTools,ModelRuntime,SessionManager,SettingsManager,estimateTokens} from '@earendil-works/pi-coding-agent';
 import {workspace as runnerWorkspace,notSelected} from './workspace.mjs';
 import {commandOptions} from './command-policy.mjs';
 import {waitModelReply} from './model-reply.mjs';
@@ -16,19 +20,32 @@ import {runSubagent} from './subagent.mjs';
 import {local} from './paths.mjs';
 import {noSpace,toolDiskFull} from './disk.mjs';
 
-// The model works in the checkout, root/repo, also before the task has its worktree (#769): the first repository read or
-// command binds it there. Tools resolve repository paths against it on every call.
-const root=process.argv[2],dir=root+'/agent',cwd=root+'/repo',config=JSON.parse(await readFile(dir+'/input.json','utf8'));
+const root=process.argv[2],dir=root+'/agent',legacyCwd=root+'/repo',config=JSON.parse(await readFile(dir+'/input.json','utf8'));
+const direct=config.model_transport!=='gateway';
+const native=config.native_access;
+const cwd=native&&/^[a-f0-9]{48}$/.test(config.native_workspace_id??'')?join(dirname(root),config.native_workspace_id,'repo'):legacyCwd;
+// Pi keeps its session files and its own state (settings, staged skills, the HOME of its shell) in the task directory the
+// control plane names for one task and role instance (session_store). That directory is no checkout, so a later round or a
+// retry in another workspace or worktree finds the session again (#1040); it is removed with the task's other directories.
+// Without one, the state stays next to the checkout.
+const sessionStore=/^[a-f0-9]{48}$/.test(config.session_store??'')?join(dirname(root),config.session_store):dirname(cwd);
+const nativeDir=join(sessionStore,'cli-state','pi',String(config.session_key??'session').replace(/[^a-zA-Z0-9_-]/g,''));
+const sessionDir=join(nativeDir,'sessions');
+let credentialHelper;
+
 if(local)config.system+='\nLocal execution: this is a host process, not a container. Stay inside your task workspace and project notes. Never search the host root filesystem or inspect unrelated projects or credentials. Never use pkill, killall or process-name-wide termination. Use keep_background for servers; the manager cleans your task processes when you finish. Read ../notes/environment.md for verified local tooling.';
 const boot=(await readFile(dir+'/state.json','utf8').then(JSON.parse).catch(()=>({}))).boot;
 const save=async value=>{value={...value,pid:process.pid,boot};await writeFile(dir+'/state.tmp',JSON.stringify(value),{mode:0o600});await rename(dir+'/state.tmp',dir+'/state.json');};
-let steps=0,session,finished,requestFailure,failureDetail;
+// recovery: how the main session began (openSession). lastModelError: the error of the latest failed model reply, the
+// reason a turn ended without its finishing call.
+let steps=0,session,nativeSessionId,recovery,finished,requestFailure,failureDetail,lastModelError;
 // reserve: tokens a later request needs beyond raw, such as a compaction summary.
 const modelCapabilities=config.model??{context_window:128000,max_output_tokens:8192,reasoning:false};
 const outputReserve=config.output_tokens??modelCapabilities.max_output_tokens;
 const modelRequestTooLarge=(raw,reserve=0)=>estimateTokens({role:'user',content:raw,timestamp:Date.now()})+outputReserve+reserve>modelCapabilities.context_window;
 // Serialize model and tool events in execution order; mask every issued token before it reaches disk.
 const secrets=new Set();let events=Promise.resolve();
+if(config.native_model?.key)secrets.add(config.native_model.key);
 const clean=value=>JSON.parse(JSON.stringify(value,(_key,item)=>typeof item==='string'?[...secrets].reduce((text,secret)=>text.replaceAll(secret,'[REDACTED]'),item):item));
 const writeEvent=value=>{const line=JSON.stringify(clean(value))+'\n';events=events.then(()=>appendFile(dir+'/events.jsonl',line,{mode:0o600}));return events;};
 // Asks the control plane for a read-only GitHub token through the task mailbox, as model requests do.
@@ -68,21 +85,25 @@ async function controlTool(name,args,signal){
 function createPullRequest(args,signal){
   return dispatchTool('create_pull_request',args,{kind:'pull_request',signal,cancelledError:'pull_request_cancelled'});
 }
-// The control plane answers only between turns, after all tool results have entered history.
-async function boundary(stage){
+// The control plane answers only between turns, after all tool results have entered history. The start of a review also
+// says how its session began, so the control plane can tell it what an earlier round left only when it is not in it.
+async function boundary(stage,detail={}){
   const id=randomBytes(24).toString('hex'),reply=dir+'/boundary-reply-'+id+'.json';
-  await writeFile(dir+'/boundary.tmp',JSON.stringify({id,stage}),{mode:0o600});await rename(dir+'/boundary.tmp',dir+'/boundary.json');
+  await writeFile(dir+'/boundary.tmp',JSON.stringify({...detail,id,stage}),{mode:0o600});await rename(dir+'/boundary.tmp',dir+'/boundary.json');
   try{for(;;){const value=await readFile(reply,'utf8').then(JSON.parse).catch(()=>null);if(value)return value;await new Promise(resolve=>setTimeout(resolve,50));}}
   finally{await unlink(dir+'/boundary.json').catch(()=>{});await unlink(reply).catch(()=>{});}
 }
 // One model request at a time goes through the mailbox, whether the main agent or a sub-agent sends it.
 let proxyQueue=Promise.resolve();
-const server=createServer((req,res)=>{const run=proxyQueue.then(()=>proxy(req,res));proxyQueue=run.catch(()=>{});});
+const server=direct?null:createServer((req,res)=>{const run=proxyQueue.then(()=>proxy(req,res));proxyQueue=run.catch(()=>{});});
 // A request over the 2 MiB mailbox or 128k context limit never leaves the runner. It is answered the way a provider
 // reports a context overflow (HTTP 413), because Pi's own threshold compaction does not always run first: it measures
 // provider-reported usage, not this raw-request estimate, and it always keeps the latest ~16k tokens, so a huge message
 // among them leaves nothing to cut yet. Pi then compacts once and retries; the run fails only when that recovery fails
 // (compaction_end below).
+// A model error saying a request did not fit: this proxy's answer below, and the generic wording providers use (a subset of
+// Pi's own overflow patterns).
+const contextOverflow=/context[_ ]length[_ ]exceeded|exceeds the context window|maximum context length|prompt (?:is )?too long|request_too_large|too many tokens|token limit exceeded/i;
 const overflow=(res,detail)=>{res.writeHead(413,{'Content-Type':'application/json'});
   res.end(JSON.stringify({error:{type:'invalid_request_error',code:'context_length_exceeded',message:'Request exceeds the context window of this model: '+detail}}));};
 async function proxy(req,res){
@@ -98,10 +119,13 @@ async function proxy(req,res){
     res.writeHead(response.status,{'Content-Type':response.content_type});res.end(response.body);
   }catch{res.writeHead(502,{'Content-Type':'application/json'});res.end('{"error":"model_proxy_unavailable"}');}
 }
-server.listen(0,'127.0.0.1');await once(server,'listening');
 try{
+  if(direct&&!config.native_model)throw new Error('pi_native_model_required');
+  if(!direct){server.listen(0,'127.0.0.1');await once(server,'listening');}
   // This literal is not a provider credential. The local proxy ignores it and cannot reach any provider itself.
-  await writeFile(dir+'/models.json',JSON.stringify({providers:{'department-proxy':{api:'openai-completions',baseUrl:'http://127.0.0.1:'+server.address().port+'/v1',apiKey:'local-proxy',models:[{id:'selected',name:'Project model',contextWindow:modelCapabilities.context_window,maxTokens:modelCapabilities.max_output_tokens,reasoning:modelCapabilities.reasoning,input:['text'],compat:{supportsStore:false,supportsDeveloperRole:false,supportsReasoningEffort:false}}]}}}),{mode:0o600});
+  const providerId=direct?'department-direct':'department-proxy',modelId=direct?config.native_model.model:'selected';
+  const api=direct?({'openai-chat-completions':'openai-completions','openai-responses':'openai-responses','anthropic-messages':'anthropic-messages'}[config.native_model.interfaceType]):'openai-completions';
+  await writeFile(dir+'/models.json',JSON.stringify({providers:{[providerId]:{api,baseUrl:direct?config.native_model.baseUrl:'http://127.0.0.1:'+server.address().port+'/v1',apiKey:direct?config.native_model.key:'local-proxy',models:[{id:modelId,name:direct?modelId:'Project model',contextWindow:modelCapabilities.context_window,maxTokens:modelCapabilities.max_output_tokens,reasoning:modelCapabilities.reasoning,input:['text'],...(api==='openai-completions'?{compat:{supportsStore:false,supportsDeveloperRole:false,supportsReasoningEffort:false}}:{})}]}}}),{mode:0o600});
   const runtime=await ModelRuntime.create({authPath:dir+'/auth.json',modelsPath:dir+'/models.json',modelsStorePath:dir+'/catalog.json',allowModelNetwork:false});
   // Tools for one agent. cfg holds that agent's trusted capabilities; agent names a sub-agent in the task log; guard
   // checks repository results against that agent's own session.
@@ -123,8 +147,8 @@ try{
         if(config.finish_on_pull_request!==false&&(result.pr||result.status==='no_changes')){finished={...args,...result};setTimeout(()=>void session.abort(),10);}
       }
       // A sub-agent is a new session built from its own configuration; it never sees this conversation.
-      else if(name==='start_agent'&&!agent)result=await runSubagent({config:cfg,args,id:'agent-'+randomBytes(6).toString('hex'),createSession:(child,childId)=>createSession(child,childId,[]),writeEvent});
-      else if(name==='read_tool_result')result=await readLocalResult(dir+'/results',cfg.workspace_id+':'+(agent||''),args);
+      else if(name==='start_agent'&&!agent)result=await runSubagent({config:cfg,args,id:'agent-'+randomBytes(6).toString('hex'),createSession,writeEvent});
+      else if(name==='read_tool_result')result=await repositoryTool(name,args,signal);
       else if(name==='read_file')result=await workspace({type:'workspace_read',workspace_id:cfg.workspace_id,path:args.path},signal);
       else if(name==='write_file'){
         const note=typeof args.path==='string'&&args.path.startsWith('../notes/');
@@ -140,7 +164,7 @@ try{
           try{await prepareLocalResults(outputDirectory);
             await writeFile(dir+'/command.out','',{mode:0o600});await writeFile(dir+'/live.json',JSON.stringify(clean({operation_id:id,output_file:outputDirectory+'/'+outputId+'.utf8',...options.request})),{mode:0o600});
             result=await workspace({...options.request,workspace_id:cfg.workspace_id,output_file:outputDirectory+'/'+outputId+'.utf8',secret_env},signal);
-            result=await localCommandResult(outputDirectory,cfg.workspace_id+':'+(agent||''),outputId,result);
+            result=await localCommandResult(outputId,result,args=>repositoryTool('store_command_result',args,signal));
             if(options.timeout_notice)result={...result,timeout_notice:options.timeout_notice};
           }catch(error){if(!noSpace(error))throw error;result={error:String(error.message)};}
           finally{await unlink(dir+'/live.json').catch(()=>{});}
@@ -158,14 +182,54 @@ try{
       result=await guard.check(id,name,result);
       await writeEvent({type:'tool',name,call_id:id,...who,arguments:args,result});return {content:[{type:'text',text:JSON.stringify(result)}],details:{},...(full||submitted||finishTools.has(name)&&!agent&&!controlTools.has(name)?{terminate:true}:{})};
     }}));
-  // A Pi session from one configuration: its system prompt, its tools and the history it is given (none for a sub-agent).
-  async function createSession(cfg,agent,history){
-    const loader={getExtensions:()=>({extensions:[],errors:[],runtime:createExtensionRuntime()}),getSkills:()=>({skills:[],diagnostics:[]}),getPrompts:()=>({prompts:[],diagnostics:[]}),getThemes:()=>({themes:[],diagnostics:[]}),getAgentsFiles:()=>({agentsFiles:[]}),getSystemPrompt:()=>cfg.system,getSystemPromptSource:()=>undefined,getAppendSystemPrompt:()=>[],getAppendSystemPromptSources:()=>[],extendResources:()=>{},reload:async()=>{}};
-    const guard={check:async(_id,_name,value)=>value},tools=makeTools(cfg,agent,guard),sessionManager=SessionManager.inMemory(cwd);
-    for(const message of history)sessionManager.appendMessage(message);
-    const {session:created}=await createAgentSession({cwd,agentDir:dir,modelRuntime:runtime,model:runtime.getModel('department-proxy','selected'),thinkingLevel:'off',resourceLoader:loader,
-      tools:tools.map(tool=>tool.name),customTools:tools,sessionManager,settingsManager:SettingsManager.inMemory({compaction:{enabled:true,reserveTokens:24000,keepRecentTokens:16000},retry:{enabled:false}})});
-    guard.check=createToolResultGuard({getMessages:()=>created.messages,tooLarge:modelRequestTooLarge,renderRequest:async messages=>{
+  // The main session is the one the control plane bound to this task and role instance (native_session): its file is
+  // opened under the current working directory, whatever directory the session was recorded in (native_resume). A new
+  // session starts when there is no binding, its file is gone or holds another session (rebuilt_from_task_records: the
+  // control plane's prompt carries what the task records keep), and always for QA. A sub-agent's session is never
+  // continued, so it is not stored.
+  function openSession(agent){
+    if(agent)return {manager:SessionManager.inMemory(cwd),mode:'new_session'};
+    const bound=config.native_session,file=typeof bound?.file==='string'?resolve(bound.file):'';
+    if(!config.native_fresh&&file.endsWith('.jsonl')&&dirname(file)===resolve(sessionDir)&&existsSync(file))try{
+      const manager=SessionManager.open(file,sessionDir,cwd);
+      if(manager.getSessionId()===bound.id)return {manager,mode:'native_resume'};
+    }catch{}
+    return {manager:SessionManager.create(cwd,sessionDir),mode:config.native_fresh?'fresh_evaluation':bound?.id?'rebuilt_from_task_records':'new_session'};
+  }
+  // A Pi session from one configuration: its system prompt and its tools. Pi's own settings apply, compaction and retry
+  // included; a session without native access reads no repository settings, as it loads none of its other resources.
+  async function createSession(cfg,agent){
+    await mkdir(nativeDir,{recursive:true,mode:0o700});
+    const settingsManager=SettingsManager.create(cwd,nativeDir,{projectTrusted:!!native});
+    const loader=native?new DefaultResourceLoader({cwd,agentDir:nativeDir,settingsManager,appendSystemPrompt:[cfg.system]}):{getExtensions:()=>({extensions:[],errors:[],runtime:createExtensionRuntime()}),getSkills:()=>({skills:[],diagnostics:[]}),getPrompts:()=>({prompts:[],diagnostics:[]}),getThemes:()=>({themes:[],diagnostics:[]}),getAgentsFiles:()=>({agentsFiles:[]}),getSystemPrompt:()=>cfg.system,getSystemPromptSource:()=>undefined,getAppendSystemPrompt:()=>[],getAppendSystemPromptSources:()=>[],extendResources:()=>{},reload:async()=>{}};
+    if(native){await stageSessionSkills(nativeDir,cfg.resources);await loader.reload();}
+    const guard={check:async(_id,_name,value)=>value},tools=makeTools(cfg,agent,guard);
+    const {manager:sessionManager,mode}=openSession(agent);
+    if(!agent){nativeSessionId=sessionManager.getSessionId();recovery=mode;}
+    if(native?.commands){
+      credentialHelper??=await startCredentialHelperServer({agentDir:dir,runToken:config.run_token,addSecret:token=>secrets.add(token)});
+      const bin=nativeDir+'/bin';await mkdir(bin,{recursive:true,mode:0o700});
+      await writeFile(bin+'/gh',`#!/bin/sh\nexec "${process.execPath}" "${new URL('./gh-wrapper.mjs',import.meta.url).pathname}" "$@"\n`,{mode:0o700});
+      const bash=createBashTool(cwd,{spawnHook:ctx=>({...ctx,env:{...ctx.env,HOME:nativeDir,PATH:bin+':'+(ctx.env.PATH??''),BOT_WRAPPER_BIN_DIR:bin,BOT_CREDENTIAL_HELPER_URL:credentialHelper.url,BOT_CREDENTIAL_HELPER_SECRET:credentialHelper.secret}})});
+      tools.push({...bash,label:'bash'});
+    }
+    const fileAccess=native?.fileTools??native?.workspace;
+    const builtin=native?[...(fileAccess!=='none'?['read','grep','find','ls']:[]),...(fileAccess==='write'?['edit','write']:[]),...(native.commands?['bash']:[])]:[];
+    if(native){
+      tools.push(...createCodingTools(cwd).filter(tool=>builtin.includes(tool.name)&&tool.name!=='bash'));
+      for(let i=0;i<tools.length;i++)if(builtin.includes(tools[i].name)){
+        const tool=tools[i];tools[i]={...tool,execute:async(...args)=>{
+          const ready=await dispatchTool('ensure_workspace',{},{kind:'workspace',signal:args[2],cancelledError:'workspace_cancelled'});
+          if(ready?.error)return {content:[{type:'text',text:JSON.stringify(ready)}],details:ready,isError:true};
+          return tool.execute(...args);
+        }};
+      }
+    }
+    const {session:created}=await createAgentSession({cwd,agentDir:native?nativeDir:dir,modelRuntime:runtime,model:runtime.getModel(providerId,modelId),resourceLoader:loader,
+      tools:[...builtin,...tools.map(tool=>tool.name)],customTools:tools,sessionManager,settingsManager});
+    // The control plane binds the task's role instance to this session and file; the next run opens them again.
+    if(!agent)await writeEvent({type:'session_bound',session_id:sessionManager.getSessionId(),recoveryMode:mode,transcript:sessionManager.getSessionFile(),messages:created.messages.length,native_tools:builtin,resources:{skills:loader.getSkills().skills.map(s=>s.name),context_files:loader.getAgentsFiles().agentsFiles.map(f=>f.path)}});
+    guard.check=createToolResultGuard({getMessages:()=>created.messages,tooLarge:modelRequestTooLarge,preserve:(name,value)=>repositoryTool('store_tool_result',{name,value}),renderRequest:async messages=>{
       // Let the same SDK serialize the projected request, then stop before any HTTP request or accounting.
       let raw;
       const stream=runtime.streamSimple(created.agent.state.model,{messages:await created.agent.convertToLlm(messages),tools:created.agent.state.tools},{
@@ -177,19 +241,24 @@ try{
     }});
     let own=0;
     created.subscribe(event=>{
-      // Pi compacted after an over-limit request and the retry still did not fit, or the compaction itself failed.
-      if(event.type==='compaction_end'&&event.reason==='overflow'&&event.errorMessage&&!event.aborted)requestFailure='agent_context_too_large';
+      if(native&&['tool_execution_start','tool_execution_end'].includes(event.type))void writeEvent({type:'tool',phase:event.type==='tool_execution_start'?'started':'completed',name:event.toolName,call_id:event.toolCallId,...(event.args?{arguments:event.args}:{}),...(event.result?{result:event.result}:{}),isError:event.isError});
+      // Pi recovers from a request over the context window itself: it compacts once and retries. The session is over the
+      // limit (agent_context_too_large) when the retry still does not fit, or when the compaction's own summary request
+      // does not fit either; reopening it would fail the same way. A compaction that failed otherwise (its summary request
+      // failed, an extension cancelled it) keeps its own reason and the session. Pi 1.4.0 says which only in its message.
+      if(event.type==='compaction_end'&&event.reason==='overflow'&&event.errorMessage&&!event.aborted&&!requestFailure){
+        requestFailure=/ recovery failed after /.test(event.errorMessage)||contextOverflow.test(event.errorMessage)?'agent_context_too_large':'agent_compaction_failed';failureDetail=event.errorMessage;
+      }
       if(event.type==='message_end'&&event.message.role==='assistant'){
         guard.check.reset();
-        const m=event.message;void writeEvent({type:'model',step:agent?++own:++steps,...(agent?{agent}:{}),reasoning:m.content.filter(c=>c.type==='thinking').map(c=>c.thinking).join(''),content:m.content.filter(c=>c.type==='text').map(c=>c.text).join(''),tool_calls:m.content.filter(c=>c.type==='toolCall').map(c=>({id:c.id,name:c.name,arguments:JSON.stringify(c.arguments)}))});
+        const m=event.message;lastModelError=m.stopReason==='error'&&m.errorMessage?String(m.errorMessage):undefined;void writeEvent({type:'model',step:agent?++own:++steps,...(agent?{agent}:{}),...(direct?{model:m.model,usage:m.usage,source:'pi_native'}:{}),reasoning:m.content.filter(c=>c.type==='thinking').map(c=>c.thinking).join(''),content:m.content.filter(c=>c.type==='text').map(c=>c.text).join(''),tool_calls:m.content.filter(c=>c.type==='toolCall').map(c=>({id:c.id,name:c.name,arguments:JSON.stringify(c.arguments)}))});
       }
     });
     return created;
   }
-  const history=await readFile(dir+'/restore.json','utf8').then(JSON.parse).catch(()=>[]);
-  session=await createSession(config,null,history);
+  session=await createSession(config,null);
   // The runtime and the exact tool surface of this session, before its first model request.
-  await writeEvent({type:'pi_session',...sdk,tools:config.tools.map(tool=>tool.function.name),control_tools:[...controlTools],extensions:0,skills:0,context_files:0,restored_messages:history.length});
+  await writeEvent({type:'pi_session',...sdk,tools:session.agent.state.tools.map(tool=>tool.name),control_tools:[...controlTools],native:!!native,recovery});
   if(config.review_session){
     session.setSteeringMode('all');
     const previousFinish=session.agent.finishTurn;
@@ -201,11 +270,9 @@ try{
       return finished?{action:'end'}:previous;
     };
   }
+  // Compaction is Pi's: it compacts the reopened session when a request needs it, never an empty one up front.
   let prompt=config.prompt;
-  if(config.review_session)prompt=(await boundary('start')).prompt||prompt;
-  if(config.review_session&&history.length&&(history.reduce((sum,message)=>sum+estimateTokens(message),0)+estimateTokens({role:'user',content:prompt+config.system,timestamp:Date.now()})>104000||Buffer.byteLength(JSON.stringify(history))>1536*1024)){
-    try{await session.compact();}catch(error){requestFailure='agent_context_too_large';throw error;}
-  }
+  if(config.review_session)prompt=(await boundary('start',{recovery})).prompt||prompt;
   // A JSON result written as the last answer, the older way to finish; undefined when there is none.
   const textResult=()=>{
     const text=session.getLastAssistantText();if(typeof text!=='string'||!text.trim())return undefined;
@@ -219,10 +286,12 @@ try{
       try{await session.prompt(input);}catch(error){if(!finished||requestFailure)throw error;}
       if(requestFailure)throw Object.assign(new Error(requestFailure),failureDetail?{detail:failureDetail}:{});
       // A controlled session ends only through its control-plane submission; without one the control plane decides.
-      if(finished||controlTools.size)return finished||null;
+      if(finished)return finished;
+      if(config.accept_turn_result)return {harness_turn:true,text:session.getLastAssistantText()??'',session_id:nativeSessionId};
+      if(controlTools.size)return null;
       const result=textResult();if(result!==undefined)return result;
       const names=finishingNames.join(' or ')||'a finishing tool';
-      if(nudge>=finishNudges)throw Object.assign(new Error('agent_finish_missing'),{detail:`The model ended ${nudge+1} turns without calling ${names}.`});
+      if(nudge>=finishNudges)throw Object.assign(new Error('agent_finish_missing'),{detail:`The model ended ${nudge+1} turns without calling ${names}.${lastModelError?' Last model error: '+lastModelError.slice(0,500):''}`});
       await writeEvent({type:'agent_nudge',attempt:nudge+1,finishing_tools:finishingNames});
       input=`Your last reply ended the turn without finishing the task: it did not call ${names}. Continue from where you stopped, using the work already done in this session, and finish by calling ${names}.`;
     }
@@ -231,11 +300,7 @@ try{
     const result=await untilFinished(prompt);
     await events;
     if(!config.review_session){await save({state:'completed',result,...sdk});break;}
-    // Persist the compacted projection, not old system prompts, model selection or discarded raw entries.
-    const messages=clean(session.messages.filter(message=>['user','assistant','toolResult','compactionSummary'].includes(message.role)).map(message=>message.role==='compactionSummary'
-      ?{role:'user',content:[{type:'text',text:'Previous conversation summary:\n'+message.summary}],timestamp:message.timestamp}:message));
-    const encoded=JSON.stringify(messages);if(Buffer.byteLength(encoded)>32*1024*1024)throw new Error('agent_context_too_large');
-    await writeFile(dir+'/history.json',encoded,{mode:0o600});
+    // The conversation is in the session file; a later round opens it again.
     await save({state:'review_ready',result,...sdk});
     for(;;){if(await readFile(dir+'/continue.json','utf8').catch(()=>null))break;await new Promise(resolve=>setTimeout(resolve,50));}
     await unlink(dir+'/continue.json');finished=undefined;grant.resume();
@@ -247,6 +312,6 @@ try{
   }
 }catch(error){await events.catch(()=>{});
   // The reason goes into the task log; issued tokens are masked like every event.
-  const known=['agent_context_too_large','agent_finish_missing','disk_full'];
+  const known=['agent_context_too_large','agent_compaction_failed','agent_finish_missing','disk_full'];
   await save({state:'failed',error:requestFailure||(known.includes(error?.message)?error.message:noSpace(error)?'disk_full':'pi_execution_failed'),detail:clean(String(failureDetail||error?.detail||error?.message||error||'unknown')).slice(0,1000)});}
-finally{session?.dispose();server.closeAllConnections();server.close();}
+finally{session?.dispose();if(server?.listening){server.closeAllConnections();server.close();}await credentialHelper?.close();}

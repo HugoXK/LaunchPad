@@ -26,6 +26,7 @@ import { ceilingStorage } from '../work/ceiling.js';
 import { retireWorkTypes } from '../work/retired.js';
 import { grantStorage } from '../tasks/grants.js';
 import { basisStorage } from '../dispatch/basis.js';
+import { progressStorage } from '../review/progress.js';
 import { dispatchStorage } from '../dispatch/store.js';
 import { githubWriteStorage } from '../github/write.js';
 import { installationStorage } from '../installations/storage.js';
@@ -93,6 +94,8 @@ export class Store {
       try { this.transaction(() => this.initialize()); }
       catch (error) { this.trajectories.dispose(); this.db.close(); throw error; }
     } else this.initialize();
+    this.trajectories.results.migrateLegacy();
+    this.trajectories.results.sweep();
   }
   private initialize(): void {
     this.db.exec(`
@@ -238,9 +241,8 @@ export class Store {
       CREATE INDEX IF NOT EXISTS review_updates_task ON review_updates(task_id,id);
       CREATE TABLE IF NOT EXISTS review_objects(repository_id TEXT NOT NULL REFERENCES repositories(id),kind TEXT NOT NULL,object_number INTEGER NOT NULL,closed_at INTEGER,
         PRIMARY KEY(repository_id,kind,object_number));
-      CREATE TABLE IF NOT EXISTS review_sessions(repository_id TEXT NOT NULL REFERENCES repositories(id),kind TEXT NOT NULL,object_number INTEGER NOT NULL,
-        task_id TEXT NOT NULL REFERENCES tasks(id),messages TEXT NOT NULL,workspace_id TEXT,generation INTEGER,head_sha TEXT,snapshot TEXT NOT NULL,
-        PRIMARY KEY(repository_id,kind,object_number));`);
+      -- Copies of review conversations before Pi kept its own session files (#1040); nothing reads them any more.
+      DROP TABLE IF EXISTS review_sessions;`);
     // The bot's summary comment on an Issue or PR, which every later review of it edits instead of adding another comment.
     this.db.exec(`CREATE TABLE IF NOT EXISTS review_summaries(repository_id TEXT NOT NULL REFERENCES repositories(id),object_number INTEGER NOT NULL,
       comment_id TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(repository_id,object_number))`);
@@ -273,6 +275,8 @@ export class Store {
     grantStorage(this);
     // Why a development was allowed to start (#815).
     basisStorage(this);
+    // What an Issue development shows on the Issue: its developing label and status comment (#1047).
+    progressStorage(this);
     identityStorage(this);
     managementStorage(this);
     channelStorage(this);

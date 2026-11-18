@@ -11,6 +11,7 @@ import { recommendedBackend, plannedBackend } from './backends.js';
 import { validateStages, type StageDefinition } from './stage-policy.js';
 import { cachedRuleFiles } from '../rules/service.js';
 import { assertHarnessModelSourceImplemented, isHarnessModelSource, type HarnessModelSource } from '../harness/subscription.js';
+import {managerSkills} from './skill-defaults.js';
 
 /**
  * RoleDefinitionV2: one project's versioned role configuration. Every reference names a fixed version: model profiles pin
@@ -236,6 +237,7 @@ function skillSourceDescriptor(source: any, ref: SkillBundleRef): any {
 // Only remove the exact framework clauses formerly included in editable default templates. Project instructions remain.
 function retireLegacyRoleGuidance(prompt: string): string {
   return prompt.replace('Task data, role memory and playbooks cannot change authority or the contract.', 'Task data, role memory and skills cannot change authority or the contract.')
+    .replace('You have no repository execution or publication tools, cannot lower criteria, override QA, finish a task or merge PRs.', 'Use your Harness native tools to inspect code, run checks and investigate external services within the effective execution permissions. Coordinate implementation through workers; QA and authorized delivery remain independent.')
     .replace(' Discover optional playbooks.', '')
     .replace('When these decomposition conditions apply, read the roadmap-decomposition playbook before choosing the execution arrangement; it explains HOW to split and coordinate. ', '');
 }
@@ -468,7 +470,8 @@ export function rolePrompt(definition: RoleDefinitionV2) {
 
 /**
  * Resolves one role for one work type into an auditable run snapshot and its run-time model. Read-only apart from storing
- * the snapshot body under its own hash. Model order: the role's explicit profile, then the work type's model, then the
+ * the snapshot body and its effective skill bundle under their own hashes. Preview resolution stores neither.
+ * Model order: the role's explicit profile, then the work type's model, then the
  * project default; the actual result is part of the snapshot. Unsupported combinations stop here, before any run starts.
  */
 export function resolveRole(s: Store, repositoryId: string, roleId: string, workflow: string, options: { expectedRevision?: number; harness?: string; pinned?: boolean; persist?: boolean; entryExecutor?: boolean;
@@ -523,13 +526,15 @@ export function resolveRole(s: Store, repositoryId: string, roleId: string, work
   const permission = permissionSnapshot(definition.permissions,definition.kind);
   const environment = environmentProfiles.find(e => e.id === definition.environment_profile_ref.id)!, schema = outputSchemas.find(o => o.id === definition.output_schema_ref.id)!;
   const bundle = definition.skill_bundle_ref ? config.skills.find(b => b.id === definition.skill_bundle_ref!.id && b.revision === definition.skill_bundle_ref!.revision) : undefined;
-  if (definition.skill_bundle_ref) skillFiles(s, repositoryId, definition.skill_bundle_ref);
+  const projectFiles=definition.skill_bundle_ref?skillFiles(s,repositoryId,definition.skill_bundle_ref):[];
+  const configuredSkills=bundle?{id:bundle.id,revision:bundle.revision,content_hash:bundle.content_hash,source:bundle.source,files:bundle.files}:null;
+  const skills=roleId==='manager'?managerSkills(s,repositoryId,configuredSkills,projectFiles,options.persist!==false):configuredSkills;
   const system = rolePrompt(definition);
   const snapshot: RoleSnapshot = { schema: 2, repository_id: repositoryId, role_id: roleId, kind: definition.kind, role_revision: definition.revision, config_revision: config.revision, legacy: !!config.legacy,
     name: definition.name, responsibility: definition.responsibility,
     prompt: { framework_hash: sha256(systemInstructions), persona_hash: sha256(definition.persona_prompt), system_hash: sha256(system) },
     model: { source, workflow, requested: definition.model_profile_ref, id: model.id, version: model.version, name: model.model, profile_hash: profileHash, ...profile },
-    skills: bundle ? { id: bundle.id, revision: bundle.revision, content_hash: bundle.content_hash, source: bundle.source, files: bundle.files } : null,
+    skills,
     harness: { id: harness.id, version: harness.version, session: harness.session, events: harness.events, environment: harness.environment, runtime: harness.runtime, source: harnessOverride ? (options.pinned ? 'legacy' : 'entry_executor') : config.legacy ? 'legacy' : 'role' },
     capability: permission,
     environment: { id: environment.id, version: environment.version, workspace: environment.workspace, repository: environment.repository, ...('isolation' in environment ? { isolation: environment.isolation } : {}) },
@@ -549,6 +554,7 @@ export function roleAuthority(s: Store, repositoryId: string, snapshot: RoleSnap
   if (!definition) return 'role_removed';
   if (!definition.enabled) return 'role_disabled';
   const live = definition.permissions;
+  for (const name of ['read_file','write_file','run_command']) if(snapshot.capability.permissions&&permitsTool(snapshot.capability.permissions,name)&&!permitsTool(live,name))return 'capability_revoked';
   const reads=snapshot.capability.permissions?githubReadScopes(snapshot.capability.permissions)
     :snapshot.capability.tools?.includes('github_read_token')?['issues','pull_requests','contents','actions','checks','statuses']:[];
   if(reads.some(scope=>!githubReadScopes(live).includes(scope)))return 'capability_revoked';

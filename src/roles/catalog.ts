@@ -18,7 +18,7 @@ export const roleKind = (id: string): RoleKind => Object.hasOwn(builtinKinds, id
  * admission requires a harness that executes inside it and the manager's inspection of that container.
  */
 const environments = [
-  { id: 'control-session', kinds: ['controller'], workspace: 'empty', repository: false, description: 'Fresh restricted Pi session per task run; no repository checkout or shell.' },
+  { id: 'control-session', kinds: ['controller'], workspace: 'empty', repository: false, description: 'Dedicated controller session; native tools follow the role execution permissions.' },
   { id: 'task-workspace', kinds: ['writer'], workspace: 'task', repository: true, description: 'The task workspace that holds the candidate.' },
   { id: 'candidate-checkout', kinds: ['observer'], workspace: 'disposable', repository: true, description: 'A disposable checkout of the fixed candidate snapshot.' },
   { id: 'evaluation-checkout', kinds: ['evaluator'], workspace: 'disposable', repository: true, description: 'A fresh checkout of the exact candidate for independent acceptance.' },
@@ -38,7 +38,7 @@ export const budgetPolicies = budgets.map(b => ({ ...b, version: version(b) }));
 
 // The structured submissions each kind ends with. The schema text itself is the versioned content.
 export const findingsSchema = { type: 'object', properties: { summary: { type: 'string' }, findings: { type: 'array', items: { type: 'object', properties: { description: { type: 'string' }, evidence: { type: 'array', items: { type: 'string' } }, severity: { type: 'string' } }, required: ['description', 'evidence'], additionalProperties: false } }, inspected_scope: { type: 'array', items: { type: 'string' } }, unknowns: { type: 'array', items: { type: 'string' } } }, required: ['summary', 'findings', 'inspected_scope', 'unknowns'], additionalProperties: false };
-export const nominationSchema = { type: 'object', properties: { result_ref: { type: 'string' } }, required: ['result_ref'], additionalProperties: false };
+export const nominationSchema = { type: 'object', properties: { result_ref: { type: 'string' }, supporting_refs:{type:'array',maxItems:20,items:{type:'string'}},summary:{type:'string'},change_title:{type:'string'} }, required: ['result_ref'], additionalProperties: false };
 export const coordinationResultSchema={type:'object',properties:{summary:{type:'string'},outcome:{type:'string',enum:['notices','needs_human']},notices:{type:'array',items:{type:'object',properties:{task_id:{type:'string'},message:{type:'string'},action:{type:'string',enum:['review','rework']}},required:['task_id','message','action'],additionalProperties:false}}},required:['summary','outcome','notices'],additionalProperties:false};
 const schemas = [
   { id: 'delivery-nomination', kinds: ['controller'], tool: 'nominate_delivery', schema: nominationSchema },

@@ -1,4 +1,5 @@
-import { resultSpec, resultOwner } from '../agent/tool-results.js';
+import {harnessAccess} from '../harness/access.js';
+import { resultSpec, taskResultOwner } from '../agent/tool-results.js';
 import {TaskRecords} from '../tasks/service.js';
 import { taskRecordContext } from '../tasks/record-tools.js';
 import {observeLongExecution,decideLongExecution} from './long-execution.js';
@@ -72,8 +73,8 @@ export function roleInstance(s:Store,task:Row,role:string,harnessOverride?:strin
    s.run('INSERT INTO role_instances(id,task_id,conversation_id,project_id,role,definition,harness,updated_at,snapshot_id,config_revision,role_revision) VALUES(?,NULL,?,?,?,?,?,?,?,?,?)',id,task.conversation_id,task.repository_id,role,JSON.stringify(runtimeDefinition(role,resolved)),resolved.snapshot.harness.id,new Date().toISOString(),resolved.id,resolved.snapshot.config_revision,resolved.snapshot.role_revision);
    instance=s.get('SELECT * FROM role_instances WHERE id=?',id)!;}
   // Main conversations keep their logical role instance, but rebuild every physical input from current local authority.
-  s.run("UPDATE role_instances SET definition=?,harness=?,snapshot_id=?,config_revision=?,role_revision=?,knowledge_fence=?,session='[]',harness_state='{}',sequence=sequence+1,updated_at=? WHERE id=?",
-   JSON.stringify(runtimeDefinition(role,resolved)),resolved.snapshot.harness.id,resolved.id,resolved.snapshot.config_revision,resolved.snapshot.role_revision,task.authority_fence??null,new Date().toISOString(),instance.id);
+  s.run("UPDATE role_instances SET definition=?,harness=?,snapshot_id=?,config_revision=?,role_revision=?,session=CASE WHEN knowledge_fence IS ? AND snapshot_id=? THEN session ELSE '[]' END,harness_state=CASE WHEN knowledge_fence IS ? AND snapshot_id=? THEN harness_state ELSE '{}' END,runtime=CASE WHEN knowledge_fence IS ? AND snapshot_id=? THEN runtime ELSE NULL END,knowledge_fence=?,sequence=sequence+1,updated_at=? WHERE id=?",
+   JSON.stringify(runtimeDefinition(role,resolved)),resolved.snapshot.harness.id,resolved.id,resolved.snapshot.config_revision,resolved.snapshot.role_revision,task.authority_fence??null,resolved.id,task.authority_fence??null,resolved.id,task.authority_fence??null,resolved.id,task.authority_fence??null,new Date().toISOString(),instance.id);
   return s.get('SELECT * FROM role_instances WHERE id=?',instance.id)!;
  }
  let instance=s.get('SELECT * FROM role_instances WHERE task_id=? AND role=?',task.id,role);
@@ -138,7 +139,8 @@ const harnessEventType:Record<string,[RunEvent['type'],RunEvent['category']]>={s
 async function prepareRun<T>(spec:AgentSpec<T>,role:string,assignment:string|undefined,harnessOverride:string|undefined,options:RoleRunOptions,state:LoopState,shared:{sourceInput:string;priorRun:Row|undefined;priorSubmission:Row|null|undefined;memory:any}):Promise<PreparedRun<T>>{
  const s=spec.store,task=spec.task,stage=stageForAssignment(s,assignment),workflow=workOf(task as any),{resolved,continuation}=state;let instance=state.instance;
  const sourceFence=taskAuthorizationFence(s,task,role);
- spec=resultSpec(spec,()=>resultOwner('task-role',task.id,role,sourceFence));
+ let resultEnvironment: unknown, resultMounted=false;
+ spec=resultSpec(spec,()=>taskResultOwner(task,resultEnvironment),()=>resultMounted);
  if(instance.source_fence!==sourceFence){
   if(instance.sequence>0){const runtime=rebuildingRuntime(instance);s.run("UPDATE role_instances SET session='[]',harness_state='{}',runtime=? WHERE id=?",runtime,instance.id);instance={...instance,session:'[]',harness_state:'{}',runtime};traceEvent(s,task.id,'source_authorization_changed',{role,instance_id:instance.id,recovery:'rebuilt_from_authorized_facts'},task.trace_run_id);}
   s.run('UPDATE role_instances SET source_fence=? WHERE id=?',sourceFence,instance.id);instance.source_fence=sourceFence;
@@ -172,17 +174,18 @@ async function prepareRun<T>(spec:AgentSpec<T>,role:string,assignment:string|und
   // A crash can leave an assistant tool batch partially answered. Mark absent receipts as
   // interrupted, never fabricate their observations; the role must query durable task facts.
   for(let i=0;i<messages.length;i++){const msg=messages[i];if(msg.role!=='assistant'||!msg.tool_calls?.length)continue;const replies=new Set<string>();let end=i+1;while(messages[end]?.role==='tool'){replies.add(messages[end].tool_call_id);end++;}const missing=msg.tool_calls.filter((c:any)=>!replies.has(c.id)).map((c:any)=>({role:'tool',tool_call_id:c.id,content:JSON.stringify({error:'interrupted_observation',instruction:'Inspect task records before repeating any action.'})}));messages.splice(end,0,...missing);i=end+missing.length-1;}
+  const qaState=role==='qa'||rebuild?{}:JSON.parse(instance.harness_state??'{}');
   // The starting recovery mode depends on the driver's session kind. An external session is pending until the agent binds
-  // it (ACP session_bound then records native_resume or rebuilt_from_task_records); a Pi session is native_resume only
-  // when its live session is reattached.
+  // it (ACP session_bound then records native_resume or rebuilt_from_task_records); a Pi session is native_resume when its
+  // live session is reattached or its bound session file is opened again (#1040), and the runner's session_bound corrects
+  // the run when that file is gone.
   const recover=role==='qa'?'fresh_evaluation':rebuild?'rebuilt_from_task_records':persistence==='external_session'?'external_session_pending'
-   :persistence==='native_resume'?(env.pi?.resume?'native_resume':instance.sequence>0?'rebuilt_from_task_records':'new_session')
+   :persistence==='native_resume'?(env.pi?.resume||qaState.harness==='pi'&&qaState.sessionId?'native_resume':instance.sequence>0?'rebuilt_from_task_records':'new_session')
    :persistence==='checkpoint_transcript'?(messages.length?'checkpoint_transcript':'new_session'):instance.sequence>0?'rebuilt_from_task_records':'new_session';
   // Admission: what this kind and environment need against what the driver declares and the environment verified.
   const kind=snapshot.kind,scope=assignmentScope(s,task,instance,assignment);let candidate=inputCandidate(s,task,role,kind);
   if(stage&&kind==='observer'){const ref=latestRoleCandidate(s,task.id);if(ref){if(ref.kind==='code'&&candidate.ref?.kind==='code'&&candidateKey(ref)!==candidateKey(candidate.ref))stop('candidate_changed','retry_wait');candidate={ref,evidence:candidate.evidence};}}
   const profile=environmentProfiles.find(e=>e.id===snapshot.environment.id) as {id:string;isolation?:string}|undefined;
-  const qaState=role==='qa'||rebuild?{}:JSON.parse(instance.harness_state??'{}');
   // A Pi entry executor submits through its workflow session's finish tools and completion check, not spec.finish.
   const admission=admitRun(s,{task,role,kind,harness:{id:driver.id,version:driver.version,capabilities:driver.capabilities},environment:profile?{id:profile.id,isolation:profile.isolation}:null,environmentFacts:env.environment?.facts??null,
    candidate,source_ref:sourceRef(s,task),required:stage?.role_constraints.capabilities,fresh:!messages.length&&!Object.keys(qaState).length,validated:!!(spec.finish||spec.validate||env.pi?.session),snapshot_id:resolved.id});
@@ -224,8 +227,10 @@ async function prepareRun<T>(spec:AgentSpec<T>,role:string,assignment:string|und
   const budgetGuard=(pendingTools=0)=>{assertStageRun(s,task.id,assignment,snapshot.kind);const stageLimit=stageBudgetExceeded(s,assignment);if(stageLimit)exhaustStage(stageLimit);if(!cumulative||!live.bound)return;const reached=budgetExceeded(budget,instanceUsage(s,instance.id),{tool_calls:pendingTools});if(reached)exhaust(reached);};
   const access={get token(){return live.bound?.token??'';},check(presented:unknown,capability?:string){const b=live.bound;if(!b||presented!==b.token)throw new TaskError('run_token_invalid','failed');verifyRunToken(s,presented,{tenant_id:b.ctx.tenant_id,project_id:b.ctx.project_id,task_id:b.ctx.task_id!,run_id:b.run_id,lease_epoch:b.epoch,role},capability);}};
   let executionRun:string|undefined;
+  resultEnvironment=env.environment?.handle;
   const wrapped:AgentSpec<T>={...spec,model,tools,pi:env.pi??spec.pi,roleWorkspace:env.roleWorkspace??spec.roleWorkspace,containerOptions:env.containerOptions?{...spec.containerOptions,...env.containerOptions}:spec.containerOptions,runEnvironment:env.environment?.handle,
    guard:async()=>{await spec.guard();authority();const b=live.bound;if(b){assertLease(s,b.run_id,b.epoch);if(!touchRunToken(s,b.token_id,tokenTtl))stop('run_token_revoked','cancelled','运行的能力令牌已撤销或过期，运行停止。');budgetGuard();}},
+   harnessTurnLimit:bounded?.max_turns??spec.harnessTurnLimit,
    maxTurns:availableTurns<limitTurns?availableTurns:configuredTurns,maxOutputTokens:bounded?.max_output_tokens??spec.maxOutputTokens,
    onDenied:(name,reason)=>denied(name,reason),
    // A newer revision requested for this running instance ends the run here; the loop below continues it.
@@ -255,7 +260,7 @@ async function prepareRun<T>(spec:AgentSpec<T>,role:string,assignment:string|und
        if(definition&&['writer','observer'].includes(definition.kind))taskExecutor(s,caller(),target);
       }
      }
-     if(taskManagementTools.some(t=>t.function.name===name)){try{return new TaskCommands(s).tool(caller(),name,args);}catch(error){const code=String((error as any).code??'');if(['task_not_owned','task_not_found','task_management_forbidden','task_executor_forbidden','task_scope_forbidden'].includes(code))return {error:code,instruction:'This action was refused. Continue with the offered task records or arrange authorized work; the refusal does not authorize broader access.'};throw error;}}
+     if(taskManagementTools.some(t=>t.function.name===name)){try{return new TaskCommands(s).tool(caller(),name,args);}catch(error){const code=String((error as any).code??'');if(['unknown_field','invalid_action','invalid_input','task_not_retryable','task_not_owned','task_not_found','task_management_forbidden','task_executor_forbidden','task_scope_forbidden'].includes(code))return {error:code,instruction:'This action was refused. Continue with the offered task records or arrange authorized work; the refusal does not authorize broader access.'};throw error;}}
      // Task facts are expanded through the gateway with this run's token: the same server-side checks for every adapter.
      if(b&&gatewayToolNames.includes(name))return gateway(s).call(b.token,{tool:name,arguments:args,run_id:b.run_id,lease_epoch:b.epoch,role});
      if(name==='read_skill'&&snapshot.skills){const files=skillFiles(s,task.repository_id,snapshot.skills);if(args?.path===undefined)return {bundle:{id:snapshot.skills.id,revision:snapshot.skills.revision,content_hash:snapshot.skills.content_hash,source:snapshot.skills.source},files:files.map(({content,...f})=>f)};
@@ -264,6 +269,8 @@ async function prepareRun<T>(spec:AgentSpec<T>,role:string,assignment:string|und
      if(memoryAliases.some(t=>t.function.name===name))return spec.execute?.(name.replace('_role_','_project_'),{...args,role_scope:role});return spec.execute?.(name,args);})();
     if(b)appendRunEvent(s,{run_id:b.run_id,lease_epoch:b.epoch,type:'tool_result',category:value?.error?'denied':'observation',operation_id:op,data:{name,outcome:value?.error?'error':'ok',error:typeof value?.error==='string'?value.error:null}});
     return value;},
+   harnessResources:snapshot.skills?skillFiles(s,task.repository_id,snapshot.skills).map(({path,content})=>({path,content})):[],
+   harnessAccess:harnessAccess(resolved.definition.permissions,Boolean(env.containerOptions?.egress),s.get('SELECT full_name FROM repositories WHERE id=?',task.repository_id)?.full_name??null,{read:taskToolAllowed(s,task,role,'read_file'),write:taskToolAllowed(s,task,role,'write_file'),commands:taskToolAllowed(s,task,role,'run_command')}),
    system:definition.prompt,
    screen:(name,args)=>{authority(name);spec.screen?.(name,args);},
    ...(spec.finish ? {finish:{...spec.finish,...(spec.finish.names?{names:spec.finish.names.filter(name=>!governed(name)||tools.some(tool=>tool.function.name===name))}:{}),validate:async(args,name)=>{authority(name??spec.finish!.name);const result=await spec.finish!.validate(args,name);authority(name??spec.finish!.name);return result;}}} : {}),
@@ -276,6 +283,7 @@ async function prepareRun<T>(spec:AgentSpec<T>,role:string,assignment:string|und
     prior_submission:shared.priorSubmission?{ref:'task_history:'+shared.priorSubmission.id,run_id:shared.priorRun!.id,instruction:'A previous submission failed formatting. Read this original record and correct its structure; reuse observations only if the candidate is still applicable. Do not repeat checks merely to fix formatting.'}:null,role_memory:visibleMemorySnapshot(s,task.repository_id,shared.memory,taskTraceAccess(s,{...task,active_role:role}))}}),
    requestPrefix:`role:${instance.id}:${instance.sequence}:`,roleRun:{instance_id:instance.id,role,version:definition.version,harness,harness_version:driver.version,assignment_id:assignment,recovery_mode:recover,snapshot_id:resolved.id},
    session:{messages:messages.length&&messages[0]?.role==='system'?[{role:'system',content:definition.prompt},...messages.slice(1)]:messages,save:msgs=>{s.run('UPDATE role_instances SET session=?,updated_at=? WHERE id=?',JSON.stringify(cleanRoleMessages(spec.redactor.clean(msgs))),new Date().toISOString(),instance!.id);}}};
+  resultMounted=!!(wrapped.runEnvironment||wrapped.roleWorkspace||wrapped.pi?.workspace||wrapped.containerOptions?.manager)&&!!wrapped.harnessAccess?.commands;
   // Adapters read the run's credential after the run is bound (the adapter starts after onRun); before that there is none.
   Object.defineProperty(wrapped,'runAccess',{get:()=>live.bound?access:undefined,enumerable:true,configurable:true});
   wrapped.runContext=()=>live.bound?.ctx;
@@ -284,7 +292,7 @@ async function prepareRun<T>(spec:AgentSpec<T>,role:string,assignment:string|und
   wrapped.onExternalRequest=value=>{ledger()?.request(value);};
   wrapped.onExternalUsage=usage=>{const b=live.bound;if(!b)return;assertLease(s,b.run_id,b.epoch);traceEvent(s,task.id,'external_model_usage',usage,b.run_id,'harness');budgetGuard();};
   // Public harness events also enter the run's normalized stream; session_bound settles a pending recovery mode.
-  wrapped.onHarnessEvent=event=>{const b=live.bound,mapped=harnessEventType[event.type];if(!b||!mapped)return;ledger()?.event(event);
+  wrapped.onHarnessEvent=event=>{const b=live.bound,mapped=event.type==='tool'&&event.phase==='completed'?['tool_result','observation'] as [RunEvent['type'],RunEvent['category']]:harnessEventType[event.type];if(!b||!mapped)return;ledger()?.event(event);
    if(event.type==='session_bound'){
     const reportedVer=typeof event.version==='string'&&event.version.trim()?event.version.trim():typeof (event.agentInfo as any)?.version==='string'&&String((event.agentInfo as any).version).trim()?String((event.agentInfo as any).version).trim():null;
     if(reportedVer)recordRunCliVersion(s,b.run_id,reportedVer);

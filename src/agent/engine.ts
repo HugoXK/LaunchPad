@@ -36,10 +36,12 @@ import { repositoryExecutionDenied } from '../installations/archive.js';
 import { Publisher, assertOwnedPR } from '../github/publisher.js';
 import { checkPullRequestLabels } from '../github/pull-request-labels.js';
 import { testEvidence, reviewLanguage, promptedBy } from '../github/text.js';
-import { developmentReady } from '../review/queue.js';
+import { assigneesOf, developmentReady } from '../review/queue.js';
+import { issueClaims } from '../review/claims.js';
+import { dueProgress, milestoneToolName, reportMilestone, settleProgress, startProgress } from '../review/progress.js';
 import { taskBasis } from '../dispatch/basis.js';
 import { actionableFinding, developmentGoal, discussionRequests, developmentApproved,
-  ownedPullRequest, developmentLabelForTask, developmentStopped, queueDevelopment, revisionRequests, type GoAhead, type RevisionRequest } from '../review/development.js';
+  ownedPullRequest, developmentLabelForTask, developmentStopped, queueDevelopment, revisionRequests, type DevelopmentOffer, type GoAhead, type RevisionRequest } from '../review/development.js';
 import { actionsConfigurationError, actionsDevelopmentAllowed, actionsIssueAssigned, actionsSourceIssue } from '../actions/safety.js';
 import { taskGithubWrite } from '../tasks/github-write.js';
 import { classificationLabels, repositoryLabels } from '../review/labels.js';
@@ -52,9 +54,9 @@ import {roleBackendWorkspace} from '../roles/workspace.js';
 import {recoverWithManager} from '../roles/manager-recovery.js';
 import { automaticState, isAttemptFailure } from './failures.js';
 import { clip, Redactor, sha, operationId, stop, TaskError } from './common.js';
-import { RuleService, resolveRules, behaviorPath, ruleErrors, skillIndex, computerRequest, projectLabels } from '../rules/service.js';
+import { RuleService, resolveRules, behaviorPath, ruleErrors, skillIndex, computerRequest, projectLabels, developingLabel } from '../rules/service.js';
 import { repositoryConcurrency } from '../app/settings.js';
-import { ReviewUpdated, latestReviewSession, saveReviewSession, pendingReviewUpdates, pruneReviewSessions, reviewObjectState, reviewUpdateLog } from '../review/sessions.js';
+import { ReviewUpdated, pendingReviewUpdates, reviewObjectState, reviewUpdateLog } from '../review/sessions.js';
 import { continueFinishedReview, continuationContext, resumeFinishedReviews } from '../review/continuation.js';
 import { type GitCache } from './git-cache.js';
 import { workOf } from '../work/catalog.js';
@@ -125,7 +127,7 @@ export class TaskEngine {
   readonly obsolete:ObsoleteSweep;
   // Decides the Manager events in the background; a decided event's new tasks start on the next tick.
   readonly dispatcher:Dispatcher;
-  constructor(readonly store:Store,readonly manager:Manager,readonly githubUrl?:string,readonly gitCache?:GitCache,readonly evaluate=evaluateDelivery){this.rules=new RuleService(store,manager,githubUrl);this.obsolete=new ObsoleteSweep(store);this.coordinator=new CoordinationWorker(store,manager);this.dispatcher=new Dispatcher(store,(s,context)=>managerDecision(s,context,githubUrl),()=>queueMicrotask(()=>this.tick()));}
+  constructor(readonly store:Store,readonly manager:Manager,readonly githubUrl?:string,readonly gitCache?:GitCache,readonly evaluate=evaluateDelivery){this.rules=new RuleService(store,manager,githubUrl);this.obsolete=new ObsoleteSweep(store);this.coordinator=new CoordinationWorker(store,manager);this.dispatcher=new Dispatcher(store,(s,context)=>managerDecision(s,context,githubUrl,manager),()=>queueMicrotask(()=>this.tick()));}
   // The running tasks of one repository, for callers that must wait until they have stopped.
   working(repositoryId:string):Promise<void>[]{return [...this.running.get(repositoryId)||[]].map(id=>this.active.get(id)).filter((work):work is Promise<void>=>!!work);}
   start(){
@@ -152,7 +154,8 @@ export class TaskEngine {
       this.store.run("UPDATE tasks SET status='queued',phase='prepare',input=?,next_run_at=0 WHERE id=? AND status='needs_replan'",JSON.stringify({...input,manager_feedback:{code:parked.error_code,detail:'Legacy parked task: review original records before deciding how to continue. Existing candidates and effects are retained.'}}),parked.id);
       traceEvent(this.store,parked.id,'manager_recovery_queued',{previous_status:'needs_replan',code:parked.error_code},null,'framework');
     }
-    const checkpoint=Date.now();pruneReviewSessions(this.store,checkpoint);
+    this.sweepProgress();
+    const checkpoint=Date.now();
     this.store.run('UPDATE task_metrics SET runtime_ms=runtime_ms+max(0,?-active_since),active_since=? WHERE active_since IS NOT NULL',checkpoint,checkpoint);
     const tasks=this.store.all(`SELECT * FROM tasks WHERE ${engineKinds} AND
       status IN ('queued','retry_wait','waiting_configuration','waiting_environment','waiting_pr_head') AND next_run_at<=? ORDER BY priority,queue_seq,id`,Date.now());
@@ -211,7 +214,28 @@ export class TaskEngine {
     if(idle)this.clearing.add(repo);
     try{await workspace.release(idle);}finally{if(idle)this.clearing.delete(repo);}
   }
-  async close(){this.closing=true;if(this.timer)clearInterval(this.timer);await this.dispatcher.close();await Promise.allSettled([...this.active.values(),...this.merging.values()]);await this.coordinator.close();}
+  async close(){this.closing=true;if(this.timer)clearInterval(this.timer);await this.dispatcher.close();await Promise.allSettled([...this.active.values(),...this.merging.values()]);await this.progressSweep;await this.coordinator.close();}
+  // Issues whose development is not shown as it is (#1047): a write to retry, or a development that ended or paused outside a
+  // run (a person cancelled it, the Issue was closed). A running development settles its Issue itself. One sweep at a time,
+  // with one GitHub client per project.
+  private progressSweep:Promise<void>|undefined;
+  private sweepProgress(){
+    if(this.progressSweep||this.closing)return;
+    const due=dueProgress(this.store).filter(row=>!this.active.has(row.task_id));
+    if(!due.length)return;
+    this.progressSweep=(async()=>{
+      for(const repositoryId of new Set(due.map(row=>row.repository_id))){
+        // The project's client is made only when one of its Issues needs a write: most status changes of a development
+        // (a retry wait, queued again) change nothing on the Issue.
+        let connected:Promise<GitHub>|undefined;
+        const client=()=>connected??=(async()=>{
+          const repo=this.store.get('SELECT * FROM repositories WHERE id=?',repositoryId);if(!repo)throw new Error('repository_missing');
+          const github=new GitHub(this.store,repo!,new Redactor(),async()=>{},this.githubUrl);github.purpose='task';await github.connect(false,undefined,{issues:'write',metadata:'read'});return github;
+        })();
+        for(const row of due.filter(row=>row.repository_id===repositoryId)){if(this.closing)return;await settleProgress(this.store,row.task_id,client);}
+      }
+    })().catch(error=>console.error(`[engine] issue progress sweep: ${(error as Error)?.message}`)).finally(()=>{this.progressSweep=undefined;});
+  }
   async run(id:string,token:string){
     const task=this.store.get('SELECT * FROM tasks WHERE id=?',id)!;const records=new TaskRecords(this.store);const redactor=new Redactor(),event=eventWork(task.kind);
     const policyHashFor=(artifacts:any[])=>sha(artifacts.some(a=>a.kind==='code')?String(this.store.get('SELECT test_command FROM policies WHERE repository_id=?',task.repository_id)?.test_command||''):'');
@@ -295,7 +319,7 @@ export class TaskEngine {
       // #713: older tasks of this same work that wait for a person are obsolete once a newer one runs.
       if(task.object_number!=null)this.obsolete.run({repository_id:String(task.repository_id),kind:String(task.kind),object_number:Number(task.object_number)});
       const repo=this.store.get('SELECT * FROM repositories WHERE id=?',task.repository_id)!;
-      await recoverWithManager(this.store,task,guard,redactor,async()=>{if(requestedTask(task))return {request:JSON.parse(task.input||'{}').request,contract:records.get(id).contract};const reader=new GitHub(this.store,repo,redactor,guard,this.githubUrl);await reader.connect(false,undefined,{contents:'read',issues:'read',pull_requests:'read'});return reader.object(task.kind,task.object_number);},async(instance,resolved)=>{if(resolved.snapshot.harness.id!=='pi')return;const environment=await this.manager.call('GET','/v1/projects/'+task.repository_id);if(!environment||!['ready','busy'].includes(environment.state))stop('environment_not_ready','waiting_environment','Manager backend is waiting for the configured project computer.');return roleBackendWorkspace(new Workspace(this.store,this.manager,{...task,generation:environment.generation},redactor,guard,log))(instance,resolved);},async()=>{const reader=new GitHub(this.store,repo,redactor,guard,this.githubUrl);const scopes=taskReadScopes(this.store,task);if(!scopes.includes('contents'))stop('github_read_token_not_allowed','waiting_permission');await reader.connect(false,undefined,{contents:'read',...(scopes.includes('pull_requests')?{pull_requests:'read'}:{})},false);return reader;});
+      await recoverWithManager(this.store,task,guard,redactor,async()=>{if(requestedTask(task))return {request:JSON.parse(task.input||'{}').request,contract:records.get(id).contract};const reader=new GitHub(this.store,repo,redactor,guard,this.githubUrl);await reader.connect(false,undefined,{contents:'read',issues:'read',pull_requests:'read'});return reader.object(task.kind,task.object_number);},async(instance,resolved)=>{if(!['pi','codex','claude_code'].includes(resolved.snapshot.harness.id))return;const environment=await this.manager.call('GET','/v1/projects/'+task.repository_id);if(!environment||!['ready','busy'].includes(environment.state))stop('environment_not_ready','waiting_environment','Manager backend is waiting for the configured project computer.');return roleBackendWorkspace(new Workspace(this.store,this.manager,{...task,generation:environment.generation},redactor,guard,log))(instance,resolved);},async()=>{const reader=new GitHub(this.store,repo,redactor,guard,this.githubUrl);const scopes=taskReadScopes(this.store,task);if(!scopes.includes('contents'))stop('github_read_token_not_allowed','waiting_permission');await reader.connect(false,undefined,{contents:'read',...(scopes.includes('pull_requests')?{pull_requests:'read'}:{})},false);return reader;});
       // A task waiting for its computer retries every few seconds, so it checks the computer before it asks GitHub for
       // anything: four such tasks once used up their installation's hourly GitHub quota while their computer was down.
       let environment:any=null;
@@ -317,10 +341,6 @@ export class TaskEngine {
         event?{contents:'read',actions:'read',checks:'read',statuses:'read',issues:'write',pull_requests:'read'}:undefined);
       let input=JSON.parse(task.input),result=task.result?JSON.parse(task.result):null;
       const development=task.kind.startsWith('development.'),review=task.kind.startsWith('review.');
-      // Only reviews continue an earlier conversation; a reply task starts fresh every time. A retry starts with an empty one,
-      // except the attempt that continues the last published one (session_attempt): a finished review's next round (#770), or
-      // the attempt a new head started in a fresh workspace (see moveHead).
-      const prior=review&&(task.attempt===1||input.session_attempt===task.attempt)?latestReviewSession(this.store,task):undefined;
       // An Issue development was started by the Manager on a person's label, which is the human decision a review asked for.
       // validate(object) checks an object just read instead of reading it again; seen is the last object it checked.
       let seen:any=null;
@@ -402,7 +422,6 @@ export class TaskEngine {
         const held=taskWorktree(this.store,task),shared=!!held&&heldBy(this.store,String(task.repository_id),held.worktree_id).some(row=>row.task_id!==task.id);
         const moved=mirror&&!shared?await workspace!.advance(next,mirror,base?[base]:[],String(heads.length)):null;
         if(!moved){
-          update({input:JSON.stringify({...JSON.parse(this.store.get('SELECT input FROM tasks WHERE id=?',id)!.input),session_attempt:task.attempt+1})});
           return stop('pull_request_head_changed','queued',`PR #${number} 有了新提交 ${next}，工作区不能原地移到新提交（${!mirror?'Git 缓存不可用':shared?'这个 worktree 还有别的任务在用':'不是 git worktree，或移动失败'}），任务在新工作区按新提交重新准备。`);
         }
         const compare=await github.request('GET',github.path(`/compare/${previous}...${next}`)).then(headComparison,(error:any)=>({error:String(error?.code||'compare_unavailable')}));
@@ -474,6 +493,18 @@ export class TaskEngine {
         }
       };
 
+      // The Issue a development works on shows it (#1047): the developing label and the status comment, brought in line with
+      // the task's state. A failed write is retried by the engine's sweep and never stops the development.
+      const issueProgress=async()=>{
+        if(task.kind!=='development.issue'||await settleProgress(this.store,id,github))return;
+        log({type:'issue_progress',error:this.store.get('SELECT error FROM issue_development_progress WHERE task_id=?',id)?.error??null});
+      };
+      // Once per run, after the task's go-ahead was checked again: the development starts, or goes on, on the Issue.
+      let progressStarted=false;
+      const beginProgress=async()=>{
+        if(progressStarted||task.kind!=='development.issue')return;
+        progressStarted=true;startProgress(this.store,task,input.object);await issueProgress();
+      };
       // Another task's pull request: published like development's, recorded on its candidate, and the task carries on.
       const publishPullRequest=async()=>{
         log({type:'phase',phase:'pull_request',target:'pull_request',detail:'正在发布到 GitHub：创建或更新 PR…'});
@@ -496,8 +527,11 @@ export class TaskEngine {
         const commit=await publisher.branch(candidate),pr=await publisher.pullRequest(candidate,commit);
         log({type:'published',outputs:[{html_url:pr.html_url,branch:candidate.branch,sha:commit}]});
         integratedPublication(this.store,task,commit);
-        await publisher.discussion('development-result',`Implemented in ${pr.html_url}\n\n${candidate.summary}\n\n${testEvidence(candidate)}\nCommit: ${commit}`);
+        // An Issue's development reports its pull request in its status comment (#1047); a revision of the bot's own pull
+        // request still says so on that pull request.
+        if(task.kind!=='development.issue')await publisher.discussion('development-result',`Implemented in ${pr.html_url}\n\n${candidate.summary}\n\n${testEvidence(candidate)}\nCommit: ${commit}`);
         update({result:JSON.stringify({summary:candidate.summary,test_command:candidate.test_command,pr_number:pr.number,pr_url:pr.html_url,branch:candidate.branch,sha:commit,tree_sha:candidate.published_tree_sha||candidate.tree_sha,local_sha:candidate.local_sha,validation:candidate.validation}),phase:'done',status:pr.number===candidate.pr_number?'completed':'pr_opened',error_code:null});
+        await issueProgress();
         return {pr:{number:pr.number,html_url:pr.html_url,sha:commit}};
       };
       // Event work runs on a checkout of the commit its event concerns, with the event as context files.
@@ -608,6 +642,8 @@ export class TaskEngine {
         const comments=await github.pages(github.path(`/issues/${task.object_number}/comments`));
         // The whole discussion and the project's skills are files the agent reads when it needs them, next to the checkout.
         const reviews=pr?await github.pages(github.path(`/pulls/${task.object_number}/reviews`)):[],reviewComments=pr?await github.pages(github.path(`/pulls/${task.object_number}/comments`)):[];
+        // Who else may be working on the Issue (#1047): the review judges a claim from these facts and the comments.
+        const claims=task.kind==='review.issue'?await issueClaims(github,this.store,object):null;
         const skills=skillIndex(effectiveRules.files),json=(value:unknown)=>JSON.stringify(value,null,2);
         await workspace.context({'object.json':json(object),'comments.json':json(comments),
           ...(pr?{'files.json':json(files),'reviews.json':json(reviews),'review_comments.json':json(reviewComments)}:{}),
@@ -626,7 +662,7 @@ export class TaskEngine {
           files,...(pr?{heads:[...(input.heads||[]).filter((head:string)=>head!==ref.object.sha),ref.object.sha]}:{}),coverage:snapshot.coverage,review_label:effectiveRules.review_label,development_label:effectiveRules.development_label,repository_labels:labels,behavior_changes:files.filter((f:any)=>behaviorPath(f.filename)||f.previous_filename&&behaviorPath(f.previous_filename)).map((f:any)=>f.filename),context:{mode:development?'development':review?'review':'workflow',repository:github.fullName,reviewed_sha:ref.object.sha,...(development?{}:{bot_login:github.actorLogin||null}),
             ...(!pr ? {actions_failure:this.store.get('SELECT classification FROM actions_failure_issues WHERE repository_id=? AND number=?',task.repository_id,task.object_number)||null} : {}),
             object:{number:object.number,title:object.title,state:object.state,author:object.user?.login||null,html_url:object.html_url||null,labels:(object.labels||[]).map((l:any)=>typeof l==='string'?l:l.name),
-              ...(pr?{draft:object.draft===true}:{}),body_excerpt:String(object.body||'').slice(0,1000)},
+              ...(pr?{draft:object.draft===true}:{}),body_excerpt:String(object.body||'').slice(0,1000)},...(claims?{claims}:{}),
             ...(pr?{pull_request:{base:{ref:object.base?.ref||null,sha:prBase},head:{ref:object.head?.ref||null,sha:object.head?.sha||null},
               diff:snapshot.history&&prBase?`git diff ${prBase}...${object.head?.sha}`:null}}:{}),
             context_files:contextFiles,skills:skills.map(({name,description,path})=>({name,description,path})),
@@ -640,8 +676,9 @@ export class TaskEngine {
             // On a revision people or other review bots asked for: their comments, which the findings above carry out.
             ...(development&&input.revision?.requests?.length?{revision_requests:input.revision.requests}:{}),review:development&&task.kind.endsWith('.pr')?null:input.review||null,effective_rules:effectiveRules,
             ...(input.comment?{trigger_comment:input.comment}:{}),...(input.trigger?{trigger:input.trigger}:{}),
-            // A finished review's next round (#770): what it continues and how to see what changed since.
-            ...(review&&Number(input.round)>1?{continuation:continuationContext(input,ref.object.sha,pr,!!prior)}:{}),
+            // A finished review's next round (#770): what it continues and how to see what changed since. The earlier round
+            // is summarized here; a session that still holds it is told so at its start (the conversation's boundary below).
+            ...(review&&Number(input.round)>1?{continuation:continuationContext(input,ref.object.sha,pr,false)}:{}),
             // On a pull request this bot opened: the comments, reviews and inline comments this review answers. Each change the
             // review takes on from one of them names it in requested_in.
             ...(review&&pr&&this.store.get('SELECT 1 FROM bot_pull_requests WHERE repository_id=? AND number=?',task.repository_id,task.object_number)
@@ -673,8 +710,9 @@ export class TaskEngine {
 
       }
       if(task.phase==='validate')stop('create_pull_request_required','needs_replan','任务停在 validate 阶段，需要重新规划并通过 create_pull_request 提交候选修改。');
-      // Every attempt refreshes GitHub before its first request. Turn boundaries do the same for pending updates.
-      const conversation=!review?undefined:{history:prior?JSON.parse(prior.messages):[],resume:false,boundary:async(stage:string)=>{
+      // Every attempt refreshes GitHub before its first request. Turn boundaries do the same for pending updates. A review's
+      // conversation is its Pi session (#1040): a later round or a retry reopens it, and Pi compacts it when it must.
+      const conversation=!review?undefined:{resume:false,boundary:async(stage:string,recovery?:string)=>{
         if(stage!=='start'&&!pendingReviewUpdates(this.store,task).length)return {messages:[]};
         // Between turns nothing runs in the workspace: a new head moves it there, which is an update of its own.
         const object=await github.object(task.kind,task.object_number);await validate(object,true);
@@ -696,7 +734,9 @@ export class TaskEngine {
         if(updates.length)this.store.run('UPDATE tasks SET review_update_cursor=? WHERE id=?',updates.at(-1)!.id,id);
         // The timeline lists every update the agent took, at its first turn too (those that came while it waited).
         for(const row of updates)log(reviewUpdateLog(JSON.parse(row.data)));
-        return stage==='start'?{prompt:JSON.stringify(roleAssignmentContext({...input.context,structured_task:records.context(id)}))}
+        // A next round's session that holds the earlier round (native_resume) needs no summary of it; any other start gets one.
+        const continuation=input.context.continuation&&recovery==='native_resume'?{continuation:continuationContext(input,String(input.snapshot_sha),task.kind==='review.pr',true)}:{};
+        return stage==='start'?{prompt:JSON.stringify(roleAssignmentContext({...input.context,...continuation,structured_task:records.context(id)}))}
           :{messages:updateMessages(updates.map(row=>JSON.parse(row.data)),object,String(task.head_sha))};
       }};
       if(development&&task.phase==='model'&&controlled(this.store,task,'development'))recoverRoleCheckpoint(this.store,task,input.snapshot_sha);
@@ -712,13 +752,19 @@ export class TaskEngine {
       if(task.phase==='model'){
         // The agent is idle here unless a restart found its process still running: then the next turn's boundary moves it.
         if(validatedPhase!=='model')await validate(undefined,!!conversation?.resume||!this.store.get('SELECT model_started FROM tasks WHERE id=?',id)?.model_started);
-        validatedPhase=undefined;
+        validatedPhase=undefined;await beginProgress();
         log({type:'phase',phase:'model',mode:development?'development':'review',detail:`Agent 开始执行：${development?'开发':'检视'}…`});
         // github_write: a direct write the acting role's GitHub permissions allow (#381), keyed per task so a retried attempt
         // never writes twice. Event work's own write tools (Actions rerun and report) come from its module.
         input.context={...input.context,acceptance_feedback:records.get(id).acceptance};
         const platform:PlatformTools={...(event?.tools?.(this.store,task,input,writes,eventState)??{})};
         const write=taskGithubWrite(this.store,task,redactor,guard,this.githubUrl);
+        // The milestones of an Issue's development go to its status comment (#1047); the control plane writes the comment.
+        if(task.kind==='development.issue')platform[milestoneToolName]=async(_callId,args)=>{
+          const recorded=reportMilestone(this.store,id,redactor.clean(args));
+          if(!('error' in recorded))await issueProgress();
+          return recorded;
+        };
         platform.github_write=async(_callId,args)=>{
           const result=await write(args);
           if(result?.html_url&&!result.replayed)log({type:'published',outputs:[{html_url:result.html_url,...(result.number?{number:result.number}:{})}]});
@@ -738,7 +784,7 @@ export class TaskEngine {
           }
           // Labels are checked against the repository before any branch is published, so a refusal can be corrected in the
           // same tool conversation (#845); the publisher adds the accepted ones once the pull request exists.
-          const labels=await checkPullRequestLabels(github,args.labels,[input.review_label,input.development_label]);
+          const labels=await checkPullRequestLabels(github,args.labels,[input.review_label,input.development_label,developingLabel(this.store,task.repository_id)]);
           if('error' in labels)return labels;
           if(input.integration){
             const checked=await workspace!.call('integration-check:'+requestId,{type:'workspace_integration_check'});
@@ -791,7 +837,7 @@ export class TaskEngine {
       }
       if(task.phase==='publish'){
         if(validatedPhase!=='publish')await validate();
-        validatedPhase=undefined;
+        validatedPhase=undefined;await beginProgress();
         if(!development)await acceptReport(result);
         update({status:'publishing'});const publisher=new Publisher(this.store,github,task,validate,undefined,log,development?undefined:()=>{
           // No await between checking the inbox and fencing the first GitHub write.
@@ -808,7 +854,7 @@ export class TaskEngine {
           }
           if(writes.includes('labels')&&result.labels?.length){
             const current=(seen||await github.object(task.kind,task.object_number)).labels;
-            const names=classificationLabels(result.labels,input.repository_labels,current,[input.review_label,input.development_label]);
+            const names=classificationLabels(result.labels,input.repository_labels,current,[input.review_label,input.development_label,developingLabel(this.store,task.repository_id)]);
             if(names.length)outputs.push({labels:(await publisher.labels(names)).map((l:any)=>l.name)});
           }
           if(outputs.length)log({type:'published',outputs:outputs.map((o:any)=>o.labels?{labels:o.labels}:{html_url:o.html_url,inline_comments:o.inline_comments?.length||0})});
@@ -825,24 +871,29 @@ export class TaskEngine {
           // publisher.review ends by validating the object, so its labels are current.
           if(writes.includes('labels')){
             const label=input.review_label,current=(seen||await github.object(task.kind,task.object_number)).labels;
-            const names=[...(label?[label]:[]),...classificationLabels(result.labels,input.repository_labels,current,[label,input.development_label])];
+            const names=[...(label?[label]:[]),...classificationLabels(result.labels,input.repository_labels,current,[label,input.development_label,developingLabel(this.store,task.repository_id)])];
             if(names.length)outputs.push({labels:(await publisher.labels(names)).map((l:any)=>l.name)});
           }
           log({type:'published',outputs:outputs.map((o:any)=>o.labels?{labels:o.labels}:{html_url:o.html_url,inline_comments:o.inline_comments?.length||0,...(o.resolved_threads?{resolved_threads:o.resolved_threads.length}:{})})});
           result={...result,outputs};
-          // A published Issue review offers development to the Manager only with a person's go-ahead already on the Issue;
-          // otherwise the labeled webhook offers it later. A failed check counts as no go-ahead.
+          // A published Issue review offers development to the Manager with a person's go-ahead already on the Issue, or,
+          // without one, when it concludes ready_for_development (#1026): the Manager then needs a basis of its own, such as
+          // its prompt's rule for clear Issues. Otherwise the labeled webhook offers it later. A failed check counts as no
+          // go-ahead; the assignees of an offer without one are those of the object publisher.review just validated.
           const policy=this.store.get('SELECT * FROM policies WHERE repository_id=?',task.repository_id);
-          let approved:GoAhead|null=null;
+          let approved:DevelopmentOffer|null=null;
           if(task.kind==='review.issue'&&covers(projectCeiling(this.store,task.repository_id,policy),'develop')){
             approved=await this.developmentApproved(github,task).catch(()=>null);
+            if(!approved&&result.conclusion==='ready_for_development')approved=await (seen?Promise.resolve(seen):github.object(task.kind,task.object_number))
+              .then((issue:any)=>({label:null,labeled_by:null,assignees:assigneesOf(issue)}),()=>null);
+            // Whether someone else has taken the Issue on is the Manager's judgement (#1047); it gets the facts as they are now.
+            if(approved){const issue=seen??await github.object(task.kind,task.object_number).catch(()=>({number:task.object_number}));approved={...approved,claims:await issueClaims(github,this.store,issue,{comments:true})};}
           }
           // Who wrote the comments a review of the bot's own pull request took on is read from GitHub before the transaction.
           const requests=await this.revisionRequests(github,task,result,input).catch(()=>[]);
           if(requests.length)log({type:'revision_requests',requests:requests.map(r=>({type:r.type,id:r.id,author:r.author,author_type:r.author_type,url:r.url}))});
           this.store.transaction(()=>{
             update({result:JSON.stringify(result),phase:'done',status:'succeeded',error_code:null});
-            saveReviewSession(this.store,task);
             this.queueDevelopment(github,task,input,result,approved,requests);
           });
         }
@@ -866,7 +917,7 @@ export class TaskEngine {
         throw error;
       }
       }
-      await this.release(workspace,task);log({type:'completed',status:task.status});
+      await this.release(workspace,task);await issueProgress();log({type:'completed',status:task.status});
     }catch(error){
       // An unexpected error keeps its message and where it was thrown (the top stack frames), in the task log and in the
       // control plane's log; both pass through the task's redactor.
@@ -965,7 +1016,7 @@ export class TaskEngine {
   label(task:Row){return developmentLabelForTask(this.store,task);}
   async developmentApproved(github:GitHub,task:Row):Promise<GoAhead|null>{return developmentApproved(this,github,task);}
   async revisionRequests(github:GitHub,task:Row,result:any,input:any={}):Promise<RevisionRequest[]>{return revisionRequests(github,task,result,input);}
-  queueDevelopment(github:GitHub,task:Row,input:any,result:any,approved:GoAhead|null=null,requests:RevisionRequest[]=[]){return queueDevelopment(this,github,task,input,result,approved,requests);}
+  queueDevelopment(github:GitHub,task:Row,input:any,result:any,approved:DevelopmentOffer|null=null,requests:RevisionRequest[]=[]){return queueDevelopment(this,github,task,input,result,approved,requests);}
   async api(user:Actor,method:string,url:URL,input:Json):Promise<Json|undefined>{
     const coordination=coordinationApi(this.store,user,method,url,input);if(coordination!==undefined)return coordination;
     const merge=await mergeApi(this.store,user,method,url,input,this.githubUrl);if(merge!==undefined)return merge;

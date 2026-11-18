@@ -1,14 +1,16 @@
 # 统一管理服务与管理助手
 
-顶部「管理助手」进入整页管理助手（`#/management`），刷新或分享地址仍打开该页；从项目页点击时选中该项目。项目设置里的「管理助手」仍在当前页面唤起悬浮窗口并选中该项目。打开管理范围按「页内显式选择（项目页带来的项目，或本页下拉里选的项目/组织）> 顶部项目切换器所选项目 > 全部有权项目」决定，`全部项目` 即全部有权项目；浏览器里以前存下的管理范围不再决定打开范围，页内临时选择标注为覆盖、只在本次打开期间有效。窗口顶部始终显示管理范围及其来源，支持全部有权项目、组织和单项目作用域。整页与悬浮窗口共用会话、输入草稿及正在运行的请求，切换展示方式不会重新发送消息。离开整页时助手收回入口，再唤起可继续对话；悬浮状态切页不改范围，收起后有新回复时入口会提示。手机（767px 及以下）没有悬浮入口：底栏「助手」就是唯一入口，收起后焦点回到它，处理中与未读状态也显示在它上面，打开的仍是同一个助手实例与同一条会话。退出登录会移除窗口并清理本次草稿。旧的项目 `/management` 链接仍在项目旁唤起窗口。
+侧栏「管理助手」进入当前地址范围的整页管理助手：全部项目为 `#/management`，单项目为 `#/projects/<id>/management`，刷新和分享保留范围。左上角范围切换器是唯一选择项目的入口；没有页内覆盖或组织选择。个人设置、回执等中立页面保留本次会话范围，失去授权的项目不会留在后续导航或下次访问的记忆中。窗口顶部显示当前范围，全部项目代表全部有权项目；服务端继续校验会话与目标权限。整页与悬浮窗口共用会话、项目草稿和正在运行的请求，切换展示方式不重新发送消息；悬浮状态跟随地址范围切换，每个范围保留独立草稿。离开整页会收回助手，再唤起可继续对话，收起后有新回复时入口会提示。手机（767px 及以下）底栏「助手」是唯一浮窗入口，收起后焦点回到它，处理中与未读状态也显示在那里。退出登录移除窗口并清理本次草稿。
 
-悬浮窗口左上角可拖动调节宽高，也可聚焦该手柄后用方向键微调；大小记在当前用户的浏览器里，并随视口限制在可见范围内。「全屏」覆盖整个可见区域，「退出全屏」或 Escape 恢复原来的展示方式和悬浮尺寸；悬浮时再按 Escape 收起。整页中的「悬浮窗口」返回此前页面并继续同一会话；直接打开或刷新整页后，默认返回项目列表。
+悬浮窗口左上角可拖动调节宽高，也可聚焦手柄后用方向键微调；大小按当前用户保存在浏览器，且限制在可见范围内。「全屏」覆盖可见区域，「退出全屏」或 Escape 恢复此前展示方式和悬浮尺寸，悬浮时再按 Escape 收起。整页中的「悬浮窗口」在范围未变时原样返回此前地址，保留任务详情、总览任务视图和待处理分页；如果整页中切换过项目，则返回新范围中的对应页面。直接打开或刷新整页，没有来源地址时返回当前范围首页。
+
+命令回执地址 `#/management/commands/<id>` 是只读中立页，保留进入时的范围；返回管理助手和回到管理会话按回执的项目指向对应助手，不创建或重放命令。
 
 窗口以连续对话为主，发送后立即显示处理状态与耗时。助手回答按实际模型流逐步显示，查询和修改操作以可展开的执行步骤呈现，区分进行中、已完成、失败和结果待确认；回执与请求参数可展开核对。中间说明与最终回答分别保留，停止或失败时保留已经收到的内容，服务重启中断也会明确标注。助手可以用 `send_message` 发送阶段消息（每轮最多 10 条，每并入一条新消息再多 1 条，见[服务角色](service-roles.md#阶段消息与一轮回答的结束)），它们以「进展消息 N」单独标注、按顺序显示在最终回答之前，不算执行步骤；从飞书私聊发起时同时发到私聊。工具进展只反映实际调用，不以模型文字推断操作成功。
 
 回答支持 Markdown 标题、列表、代码块、引用、表格、任务清单和链接，并可复制原始 Markdown。渲染使用随服务提供的 Marked 与 DOMPurify，限制为文档标签，移除脚本、事件属性、危险协议及自动加载的图片；外部链接在新标签打开。新消息默认跟随底部，向上翻阅后暂停跟随，可用「回到最新消息」返回。断线时直接提供「重新连接」，只续读事件，不重发请求；处理中可以继续写下一条草稿。
 
-「新建会话」位于顶部，「会话记录」可切换持久会话。「快捷操作」集中放置查询、Manager 章节表单、任务管理及定时计划，执行配置或任务命令后返回对话查看结果。Ctrl / ⌘ + Enter 发送，Escape 收起；收起和重新连接不会重复提交命令。
+「新建会话」位于顶部，「会话记录」可切换持久会话。「快捷操作」集中放置查询、Manager 章节表单、任务管理及项目定时任务，执行配置或任务命令后返回对话查看结果。Ctrl / ⌘ + Enter 发送，Escape 收起；收起和重新连接不会重复提交命令。
 
 查询、显式表单和自然语言工具调用使用 `ManagementService`。「角色」页的 Manager 配置、项目策略、角色配置与 Task 操作也进入相同命令服务。ActorContext 由服务端的 `resolveActor` 创建；可信 IM 适配器可使用身份模块解析后的 actor，不能反序列化客户端 actor 或自行授予权限。
 
@@ -49,7 +51,7 @@ RoleDefinitionV2 的显式角色 apply 仍在安全检查点结束旧 run，并�
 
 ## 生效来源与配置 PR
 
-`get_effective_config` 返回每条规则的来源（builtin 内置文本或 console Manager 章节；只有仓库 skill 为 repository）和版本。`.bot/` 文件不再读取（#935），`workflow.update` 和 `manager.update` 保存后即对之后的新任务生效，回执为 `effect: future_tasks`、`effective: true`。
+`get_effective_config` 返回每条规则的来源（builtin 内置文本或 console Manager 章节；只有仓库 skill 为 repository）和版本；`workflows[].prompt.effective` 是生效的全文，`layers` 只列各层的来源和版本，不再重复全文（#1026，避免结果超出管理工具的 256 KiB 上限）。`.bot/` 文件不再读取（#935），`workflow.update` 和 `manager.update` 保存后即对之后的新任务生效，回执为 `effect: future_tasks`、`effective: true`。
 
 `configuration.pr` 只允许仓库 skill 路径（`.agents/skills/<名称>/SKILL.md`；`.bot/` 文件不再读取），行为规则用 `manager.update`、`roles.update` 和 `project.update` 的标签字段修改；它使用已有 GitHub App installation token，不接受个人写 Token。必须先刷新默认分支规则来源；默认分支变化后要求重新读取。创建 PR 返回 `pending_merge` 和链接，合入并刷新来源之前不宣称生效。分支和 PR 使用持久命令 ID 对账；任何未知外部响应都进入 `unknown`，`POST /api/management/commands/:id/resume` 先查原 PR，未查到仍保留未知状态，绝不盲目重复创建。
 
@@ -86,9 +88,9 @@ RoleDefinitionV2 的显式角色 apply 仍在安全检查点结束旧 run，并�
 
 整份方案一次确认（#932），可以去掉其中几项；确认后控制面按固定顺序逐项应用，每项都走人自己会用的现有通道，以确认人的身份执行，权限照常检查，不借用任何别人的权限。
 
-**确认什么**：页面状态的 `plan.changes` 是这份方案与项目现状的差异，每项带 `item`、生效位置 `where`、现值 `current` 和方案值 `proposed`，按应用顺序排列：启动 `start`（仓库还没启动时）、能力上限 `capability_ceiling`、Manager 的事件开关 `events`、`test_command`、`review_language`、约定 `conventions`、要新建的标签 `labels`、Manager 定时检查 `schedules`、CI 建议 `ci`。已经和方案一样的项不列出：已启动的项目重新运行时只剩差异，没有差异时为空，接入页据此说明"无需改动"；以前的确认已经建过或找到的标签、同一条 CI 建议建过的任务、同名的 Manager 定时检查、正文已在提示词里的约定都算已经一样。方案生成之后有人改过设置，差异里看到的就是改后的现值，由确认的人决定是否覆盖。约定只认接入向导段落（「本仓库约定（接入向导第 N 版…」标题下）里的内容，提示词别处出现同样的字不算。启动一项还写明仓库是否属于受信任组织；属于时带 `organization_capability_ceiling`，即自己启动时用的组织能力档。飞书群建议不是应用项，留给完成页给出绑定入口。`plan.changes_revision` 标识这份差异。
+**确认什么**：页面状态的 `plan.changes` 是这份方案与项目现状的差异，每项带 `item`、生效位置 `where`、现值 `current` 和方案值 `proposed`，按应用顺序排列：启动 `start`（仓库还没启动时）、能力上限 `capability_ceiling`、Manager 的事件开关 `events`、`test_command`、`review_language`、约定 `conventions`、要新建的标签 `labels`（能力上限为 `develop` 的方案由控制面补上开发中标签，#1047）、Manager 定时检查 `schedules`、CI 建议 `ci`。已经和方案一样的项不列出：已启动的项目重新运行时只剩差异，没有差异时为空，接入页据此说明"无需改动"；以前的确认已经建过或找到的标签、同一条 CI 建议建过的任务、同名的 Manager 定时检查、正文已在提示词里的约定都算已经一样。方案生成之后有人改过设置，差异里看到的就是改后的现值，由确认的人决定是否覆盖。约定只认接入向导段落（「本仓库约定（接入向导第 N 版…」标题下）里的内容，提示词别处出现同样的字不算。启动一项还写明仓库是否属于受信任组织；属于时带 `organization_capability_ceiling`，即自己启动时用的组织能力档。飞书群建议不是应用项，留给完成页给出绑定入口。`plan.changes_revision` 标识这份差异。
 
-**确认**：`POST /api/management/onboarding/<仓库 id>/confirm`，请求体 `{version, changes_revision, items, schedule_destination_id?}`。`version` 必须是这个仓库最新一版方案（否则 409 `onboarding_plan_outdated`），`changes_revision` 必须与当前差异一致（否则 409 `onboarding_changes_outdated`，重新读取后再确认），`items` 是差异里要应用的项（不在差异里或为空返回 400 `invalid_onboarding_items`，没有差异返回 409 `onboarding_nothing_to_apply`）；仓库还没启动时 `start` 必须在内（400 `onboarding_start_required`）。确认记录确认人、时间和方案版本，方案本身不再改动，要改就让管理助手出新一版。同一版方案只能确认一次，再次确认直接返回已有的结果，不会重复应用。页面状态的 `application` 是这个仓库最近一次确认和它的回执。
+**确认**：`POST /api/management/onboarding/<仓库 id>/confirm`，请求体 `{version, changes_revision, items}`。`version` 必须是这个仓库最新一版方案（否则 409 `onboarding_plan_outdated`），`changes_revision` 必须与当前差异一致（否则 409 `onboarding_changes_outdated`，重新读取后再确认），`items` 是差异里要应用的项（不在差异里或为空返回 400 `invalid_onboarding_items`，没有差异返回 409 `onboarding_nothing_to_apply`）；仓库还没启动时 `start` 必须在内（400 `onboarding_start_required`）。确认记录确认人、时间和方案版本，方案本身不再改动，要改就让管理助手出新一版。同一版方案只能确认一次，再次确认直接返回已有的结果，不会重复应用。页面状态的 `application` 是这个仓库最近一次确认和它的回执。
 
 **每项怎么应用**：
 
@@ -97,10 +99,10 @@ RoleDefinitionV2 的显式角色 apply 仍在安全检查点结束旧 run，并�
 - `events`：管理命令 `manager.update` 的 `events`，与「监听与触发」同一套校验。
 - `conventions`：以「本仓库约定（接入向导第 N 版，日期）」为标题的独立段落，追加到 Manager 提示词（项目保存过完整的分派提示词时追加到它末尾，否则追加到 Manager 提示词的前言，分派提示词以前言开头），并追加到每个启用的角色（跨任务的 coordinator 除外）的角色提示词（`manager.update`、`roles.update`），不覆盖已有内容，也不写 `.bot/` 文件；仓库的 `.bot/` 文件不再读取（#935），这两处就是生效的规则。已经带有这一版段落的提示词不再追加。
 - `labels`：先读仓库现有标签；不存在的经 `github_write POST /labels` 新建（只放行这条路由，项目能力上限至少要 `comment`），已经存在的同名标签不改颜色和说明，记为 `exists`。写入按标签名记账，重试不会重复创建。
-- `schedules`：Manager 定时检查（#851）是项目计划，用项目服务身份运行；项目还没有服务身份时，这一项以确认人的委托创建（只拿确认人自己在项目里的能力，失去时随之失效）；差异里这一项的 `service_principal` 为 `delegated` 时接入页在确认前写明这一点，已有服务身份时为 `existing`。计划需要通知目的地：确认或重试时带 `schedule_destination_id`；没带时这一项失败（`schedule_destination_required`），回执的 `detail.destinations` 列出可选的目的地。已有同名的 Manager 定时检查不再创建。
+- `schedules`：Manager 定时检查（#851）是项目定时任务，用项目服务身份运行；项目还没有服务身份时，这一项以确认人的委托创建（只拿确认人自己在项目里的能力，失去时随之失效）；差异里这一项的 `service_principal` 为 `delegated` 时接入页在确认前写明这一点，已有服务身份时为 `existing`。项目定时任务的结果留在项目里，不需要选择飞书目的地（#1027）；旧版本留下的 `schedule_destination_required` 失败直接重试即可。已有同名的 Manager 定时检查不再创建。
 - `ci`：管理命令 `task.create` 建一个普通开发任务，合同就是这条建议（目标、要改的文件、经 bot PR 交付由人合并），并带 `workflow_changes`：确认 CI 一项就是人在控制台确认这项任务可以修改 `.github/workflows/`（#931），所以这些命令的来源是 `console:onboarding:<仓库 id>`；项目能力上限不到 `develop` 时这一项失败并写明原因。同一份确认里已经建成的任务（例如建成之后控制面重启、回执没来得及写）在重试时直接沿用，不会再建一个。
 
-**回执**：每项一条，状态为 `succeeded`、`exists`（已经和方案一样）、`failed`（带 `error`，必要时带 `detail`）或 `skipped`（确认时去掉了），并记录执行人、尝试次数和管理命令回执 id；审计记录确认（`onboarding.confirmed`）和每项结果（`onboarding.item.<状态>`）。某项失败不影响后面的项。`POST /api/management/onboarding/<仓库 id>/items/<项>/retry`（可带 `schedule_destination_id`）只重试一项失败的项（其他状态返回 409 `onboarding_item_not_failed`），以新的幂等键执行；重试启动成功后接着应用等待它的项。控制面在应用途中重启时，正在应用的项记为失败（`onboarding_item_interrupted`），可以重试。同一个仓库同一时间只应用一份确认（在这个控制面进程里按仓库加锁）：正在应用时再确认或重试都返回 409 `onboarding_apply_running`，回执保持原状，稍后再试。
+**回执**：每项一条，状态为 `succeeded`、`exists`（已经和方案一样）、`failed`（带 `error`，必要时带 `detail`）或 `skipped`（确认时去掉了），并记录执行人、尝试次数和管理命令回执 id；审计记录确认（`onboarding.confirmed`）和每项结果（`onboarding.item.<状态>`）。某项失败不影响后面的项。`POST /api/management/onboarding/<仓库 id>/items/<项>/retry`（空请求体）只重试一项失败的项（其他状态返回 409 `onboarding_item_not_failed`），以新的幂等键执行；重试启动成功后接着应用等待它的项。控制面在应用途中重启时，正在应用的项记为失败（`onboarding_item_interrupted`），可以重试。同一个仓库同一时间只应用一份确认（在这个控制面进程里按仓库加锁）：正在应用时再确认或重试都返回 409 `onboarding_apply_running`，回执保持原状，稍后再试。
 
 ### 申请启动与审批
 
@@ -123,4 +125,4 @@ RoleDefinitionV2 的显式角色 apply 仍在安全检查点结束旧 run，并�
 
 `ManagementService.register` 为配置发布、知识修订、计划和通知提供可信 execute / reconcile 注册接口。`knowledgeSearch` 是受限检索接入点。计划和通知由 [持久化调度模块](schedules.md) 注册，表单和管理工具走同一服务；未注册的业务工作流处理器明确不支持。知识模块未注册时返回明确不可用。角色配置沿用 RoleDefinitionV2 接口与版本检查；Pi prepare、角色快照和显式 revision 续接与项目主控共用现有实现。
 
-`e2e/management-live.spec.mjs` 通过真实模型 SSE 和管理事件流验证完成前渲染、工具进展、多轮文本、Markdown 安全边界、停止、失败、重连、滚动及历史回读。`test/repository-onboarding.test.mjs` 覆盖接入向导：未启动仓库的只读分析（只签发一次只读令牌并在本轮后撤销、令牌不进模型与事件、GitHub 没有写入、项目仍未启动）、非管理员的错误码、多人共用同一会话、问题与方案草稿的校验和保存、一次一轮、启动后用量转记到项目、已启动项目带当前设置，以及受信任组织的默认模型；`test/repository-onboarding-apply.test.mjs` 覆盖确认与应用：差异与确认的各种拒绝、各项经现有通道生效（能力上限、事件、测试命令、Manager 与角色提示词的约定段落、GitHub 新标签、开发任务带 `workflow_changes`）、已存在的标签不改、缺少目的地的定时检查单独失败并可重试、重复确认和重试不重复写入、重新运行只列差异，以及未启动仓库的启动顺序（需要审批、受信任组织自己启动后调到方案档位、超级管理员按方案档位启动）；`test/repository-onboarding-requests.test.mjs` 覆盖启动申请：确认即申请、启动一项等待、超级管理员的列表和飞书私聊通知、非超级管理员不能查看和决定、撤回后重试再申请、拒绝必须写原因并通知申请人、同意时改能力档并信任组织、其余各项以申请人身份应用、移出安装后申请失效，以及超级管理员在飞书私聊里回复拒绝（带原因）和同意、申请人的私聊没有这一工具、经组织应用的通知只指向控制台。阶段消息（事件流、10 条上限、私聊送达）和不限步数由 `test/channel-stage-messages.test.mjs` 与 `e2e/stage-messages.spec.mjs` 覆盖。`test/management.test.mjs` 覆盖权限、并发、幂等、配置来源、直接执行（旧审批策略不再生效、遗留待审批命令不执行）、未知结果、停止和会话隔离；`e2e/management.spec.mjs` 使用独立 SQLite、随机监听端口和本地模型协议夹具验证真实持久化查询、配置修改、任务管理及浏览器/API 一致性。全部临时产物应放在工作树 `.tmp/`，运行测试时设置 `TMPDIR` 为该目录。
+`test/e2e/management/management-live.spec.mjs` 通过真实模型 SSE 和管理事件流验证完成前渲染、工具进展、多轮文本、Markdown 安全边界、停止、失败、重连、滚动及历史回读。`test/st/src/onboarding/repository-onboarding.test.mjs` 覆盖接入向导：未启动仓库的只读分析（只签发一次只读令牌并在本轮后撤销、令牌不进模型与事件、GitHub 没有写入、项目仍未启动）、非管理员的错误码、多人共用同一会话、问题与方案草稿的校验和保存、一次一轮、启动后用量转记到项目、已启动项目带当前设置，以及受信任组织的默认模型；`test/st/src/onboarding/repository-onboarding-apply.test.mjs` 覆盖确认与应用：差异与确认的各种拒绝、各项经现有通道生效（能力上限、事件、测试命令、Manager 与角色提示词的约定段落、GitHub 新标签、开发任务带 `workflow_changes`）、已存在的标签不改、缺少目的地的定时检查单独失败并可重试、重复确认和重试不重复写入、重新运行只列差异，以及未启动仓库的启动顺序（需要审批、受信任组织自己启动后调到方案档位、超级管理员按方案档位启动）；`test/st/src/onboarding/repository-onboarding-requests.test.mjs` 覆盖启动申请：确认即申请、启动一项等待、超级管理员的列表和飞书私聊通知、非超级管理员不能查看和决定、撤回后重试再申请、拒绝必须写原因并通知申请人、同意时改能力档并信任组织、其余各项以申请人身份应用、移出安装后申请失效，以及超级管理员在飞书私聊里回复拒绝（带原因）和同意、申请人的私聊没有这一工具、经组织应用的通知只指向控制台。阶段消息（事件流、10 条上限、私聊送达）和不限步数由 `test/st/src/channels/channel-stage-messages.test.mjs` 与 `test/e2e/roles/stage-messages.spec.mjs` 覆盖。`test/st/src/management/management.test.mjs` 覆盖权限、并发、幂等、配置来源、直接执行（旧审批策略不再生效、遗留待审批命令不执行）、未知结果、停止和会话隔离；`test/e2e/management/management.spec.mjs` 使用独立 SQLite、随机监听端口和本地模型协议夹具验证真实持久化查询、配置修改、任务管理及浏览器/API 一致性。全部临时产物应放在工作树 `.tmp/`，运行测试时设置 `TMPDIR` 为该目录。

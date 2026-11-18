@@ -1,4 +1,4 @@
-import { commandResult, ResultSession, resultOwner } from './tool-results.js';
+import { commandResult, ResultSession, projectResultOwner } from './tool-results.js';
 import { type Store, type Row } from '../storage/database.js';
 import { type Manager } from '../projects/service.js';
 import { GitHub, repositoryTree } from '../github/client.js';
@@ -88,10 +88,10 @@ export class Workspace {
     const trajectories=this.store.trajectories,scope=trajectories.scopeOf(this.task);
     if(!row){
       // Conversation rows were sealed before: they keep no fields of the request at all, only its ref and hash.
-      const recordedInput=input.request?.type==='workspace_browser'?sanitizeBrowserTrajectory(input):input;
+      const recordedInput=['workspace_agent_config','workspace_harness_config','workspace_agent_token'].includes(input.request?.type)?{...input,request:{...input.request,base64:'[redacted]'}}:input.request?.type==='workspace_browser'?sanitizeBrowserTrajectory(input):input;
       if(scope)this.store.run(`INSERT INTO ${table}(id,${owner},request,result,state,request_ref,request_sha256) VALUES(?,?,?,NULL,'pending',?,?)`,id,this.task.id,
         conversation?'{}':JSON.stringify(payloadHeader(recordedInput)),trajectories.append(scope,'tool_call',id,recordedInput),digest);
-      else this.store.run(`INSERT INTO ${table}(id,${owner},request,result,state) VALUES(?,?,?,NULL,'pending')`,id,this.task.id,conversation?this.store.secrets.seal(recordedInput,'conversation-operation:'+id+':request'):JSON.stringify(recordedInput));
+      else this.store.run(`INSERT INTO ${table}(id,${owner},request,result,state,request_sha256) VALUES(?,?,?,NULL,'pending',?)`,id,this.task.id,conversation?this.store.secrets.seal(recordedInput,'conversation-operation:'+id+':request'):JSON.stringify(recordedInput),digest);
     }
     if(request.type==='workspace_command'&&!key.startsWith('model:'))this.log({type:'phase',phase:'validate',operation_id:id,command:request.command,detail:`正在运行测试：${request.command}`});
     let response;
@@ -111,7 +111,7 @@ export class Workspace {
     finally{operations.delete(id);if(!operations.size&&inFlight.get(this.task.id)===operations)inFlight.delete(this.task.id);}
     let result=this.redactor.clean(response.ok?response.result:{error:response.error||'runner_operation_failed',...(response.detail?{detail:response.detail}:{})});
     if(request.type==='workspace_command'&&scope)result=await commandResult(result,id,async offset=>this.manager.call('GET',`/v1/projects/${this.task.repository_id}/output/${id}?offset=${offset}`),
-      new ResultSession(this.store,scope,()=>resultOwner('task',this.task.id,this.task.authority_fence),this.guard));
+      new ResultSession(this.store,scope,()=>projectResultOwner(this.task.repository_id),this.guard));
     // A repeated call replays this result: it is on disk before the row points to it. Browser screenshot bytes and typed
     // text stay off the stored record; the in-memory result still carries them so evidence can be persisted.
     const storedResult=request.type==='workspace_browser'?sanitizeBrowserTrajectory(result):result;

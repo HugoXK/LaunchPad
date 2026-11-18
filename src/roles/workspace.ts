@@ -1,3 +1,4 @@
+import { computerResultOwner } from '../../runner/result-owner.mjs';
 import { latestRoleCandidate } from './schedule.js';
 import { eventHistory, historyOrder } from './role-run.js';
 import {AsyncLocalStorage} from 'node:async_hooks';
@@ -21,6 +22,7 @@ export function isolatedRunEnvironment(workspace:Workspace,given?:RunEnvironment
   // Built only when a profile needs it: most runs never touch the run-environment API.
   const client=given??new RunEnvironmentClient(workspace.manager,String(workspace.task.repository_id));
   const id=randomId(),kind=resolved.snapshot.kind;
+  workspace.store.trajectories.results.directory(computerResultOwner('run',id));
   const env=await provisionRunEnvironment(client,{run_id:id,task_id:String(workspace.task.id),lease_epoch:0,profile:kind==='writer'?'writer':'observer',network:'none'});
   traceEvent(workspace.store,workspace.task.id,'role_run_environment',{role:instance.role,instance_id:instance.id,environment_id:id,verified:env.facts.verified,violations:(env.facts.detail as any)?.violations??[],container:(env.facts.detail as any)?.container??null,limits:(env.facts.detail as any)?.limits??null},workspace.task.trace_run_id);
   if(!env.facts.verified)return {environment:{facts:env.facts,handle:null}};
@@ -101,7 +103,8 @@ export function roleBackendWorkspace(workspaceOrGetter:Workspace|(()=>Workspace)
    store.run('UPDATE role_instances SET runtime=? WHERE id=?',JSON.stringify({workspace_id:space.task.workspace_id,generation:task.generation,created_at:new Date().toISOString()}),instance.id);
   }
   const live=space;
-  return {pi:{workspace:live,resume,key:'pi:'+live.task.workspace_id,runtime:{version:resolved.snapshot.harness.version,report:report(live,instance,resolved.snapshot.harness.version,resume?'native_resume':'new_session')}},release:()=>live.release(false)};
+  let egress=false;try{egress=computerEgress(await workspace.manager.call('GET','/v1/projects/'+task.repository_id));}catch{}
+  return {roleWorkspace:workspace,containerOptions:{manager:workspace.manager,egress},pi:{workspace:live,resume,key:'pi:'+live.task.workspace_id,runtime:{version:resolved.snapshot.harness.version,report:report(live,instance,resolved.snapshot.harness.version,resume?'native_resume':'new_session')}},release:()=>live.release(false)};
  };
 }
 /** Compatibility name: controllers use the same backend preparation as every other role. */

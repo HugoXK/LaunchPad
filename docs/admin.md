@@ -23,7 +23,7 @@
 
 ```sh
 mkdir department-bot && cd department-bot
-curl -fsSLO https://raw.githubusercontent.com/agent-CI-Infra/bot/main/compose.yaml
+curl -fsSLO https://raw.githubusercontent.com/agent-CI-Infra/bot/main/docker/compose.yaml
 docker compose up -d
 ```
 
@@ -56,7 +56,7 @@ docker compose up -d
 
 配置按资源上限、软件与初始化、网络与环境变量分组，各字段分别标明全局默认或项目控制台来源；仓库里的 `.bot/computer.yaml` 不再读取（#935）。资源的配置目标与电脑报告分开展示，全局默认等待重建时不据目标值宣称运行中容器已应用。保存影响区列出本组未保存的字段及重建、后台进程结束和工作卷保留的影响；项目任务并发单独保存，与角色限额分开，也不会重建电脑。已保存的机器配置读取失败时，各字段显示来源未知并禁止保存；点击「重新读取电脑配置」重新读取。机器页不等待、也不读取默认分支（#935）。读取失败会在入口旁显示原因，仍可重试。
 
-项目的「基本设置」按概况、分支、标签（检视标签和开发标签）、监听与触发入口和公开可见性分组；仓库还留着已导入的 `.bot/` 文件时，概况里提示可以删除，能力上限和事件来源统一在项目「监听与触发」页编辑；启用、禁用与删除集中在危险区。分支和「监听与触发」页功能策略的未保存输入只在当前浏览器页面内存中保留，切换页面再返回或使用「刷新项目设置」不会丢弃草稿；重新载入整个网页后不保留。保存失败保留输入，可显式放弃本组草稿。项目列表和基本设置中的公开看板开关共用范围确认，列明目标项目；开启和关闭分别确认，取消不保存，失败保留原状态并显示原因。私有仓开启时也会说明无需登录的公开范围，且不随项目禁用自动关闭。
+项目的「基本设置」按概况、分支、标签（检视标签、开发标签和开发中标签）、监听与触发入口和公开可见性分组；仓库还留着已导入的 `.bot/` 文件时，概况里提示可以删除，能力上限和事件来源统一在项目「监听与触发」页编辑；启用、禁用与删除集中在危险区。分支和「监听与触发」页功能策略的未保存输入只在当前浏览器页面内存中保留，切换页面再返回或使用「刷新项目设置」不会丢弃草稿；重新载入整个网页后不保留。保存失败保留输入，可显式放弃本组草稿。项目列表和基本设置中的公开看板开关共用范围确认，列明目标项目；开启和关闭分别确认，取消不保存，失败保留原状态并显示原因。私有仓开启时也会说明无需登录的公开范围，且不随项目禁用自动关闭。
 
 
 「成员」按当前项目展示实际授权来源、范围、状态和时效：「来自 GitHub（继承）」（仓库 Admin、组织 owner）、「来自 GitHub：Write／Maintain 协作者」「来自 GitHub：Triage／Read 协作者」、「来自组织授权（继承）」、「项目管理员 <名字> 授予」和「本项目手动分配」。读取需要本项目配置权限。项目管理员在页面底部「授权成员」里按 GitHub 用户名授出只读、成员或项目管理员，只能授出自己在本项目拥有的权限，也能逐条撤销本项目里不超出自己权限的委派；由项目管理员授予的权限只在授予人仍有这些权限时有效，否则显示为暂停（规则见[项目内委派](identity-authorization.md#项目内委派)）。整个组织的授权和平台角色仍只由超级管理员授予；旧式项目管理员分配仍仅由平台管理员（用户页显示为「管理员」）编辑，移除项目分配不会撤销组织继承或独立委派。
@@ -124,7 +124,7 @@ docker compose up -d
 
 数据在五个部署卷里：`bot-data`（控制面数据库）、`bot-keys`（加密凭据的主密钥）、`internal-keys`（bot 与 manager 的内部认证）、`manager-data`（虚拟电脑账本及各项目笔记卷的文件）和 `assistant-homes`（群聊助手、管理助手电脑的持久 HOME）；`tunnel-keys` 只放 Cloudflare Tunnel token。丢了主密钥，已保存的 App 私钥和模型 Key 都解不开。`docker compose down` 会保留卷；日常升级不要加 `-v`（`--volumes`），它会删掉这些卷。备份见[备份与恢复](deployment.md#备份与恢复)。
 
-以前在仓库根目录用 `docker compose up --build -d` 从源码部署的实例，更新代码后再运行 `docker compose up -d` 会改为拉取 GHCR 镜像（同一目录，数据卷不变）；要继续从源码构建，改用 `docker compose -f compose.yaml -f compose.build.yaml up -d --build`。
+以前在仓库根目录用 `docker compose` 从源码部署的实例，Compose 文件已迁至 `docker/` 目录；要继续沿用仓库根目录的 `.env`、项目名和数据卷从源码构建，运行 `BOT_BUILD_CONTEXT=. docker compose --project-directory . -f docker/compose.yaml -f docker/compose.build.yaml up -d --build`（全新检出不需沿用旧根目录项目名时，也可直接运行 `docker compose -f docker/compose.yaml -f docker/compose.build.yaml up -d --build`）。
 
 ## 常用设置
 

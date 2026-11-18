@@ -1,3 +1,4 @@
+import {pruneDispatchFailures} from '../dispatch/store.js';
 import { createHash } from 'node:crypto';
 import type { Row, Store } from './database.js';
 import type { Manager } from '../projects/service.js';
@@ -19,7 +20,7 @@ import { pruneCommitChecks } from '../tasks/external-links.js';
 // - manager_payload_days: the manager's copies of runner-call bodies (TrajectoryExpiry, default 2), pushed to the manager.
 // - workspace_finished_days / workspace_failed_days: the task workspace rules of #444 (1 and 7 days by default).
 // - webhook_payload_days: the bodies of received webhook deliveries; the row, status and headers stay, with the body's
-//   sha256. At least 7 days: daily reports and external executors read recent deliveries.
+//   sha256. At least 7 days: external executors read recent deliveries.
 // Unset (null) keeps everything, as decided in #436; the manager window and the workspace rules keep their defaults.
 export interface RetentionSettings {
   trajectory_days: number | null;
@@ -130,7 +131,9 @@ export class RetentionCleanup {
     return this.running ??= this.pass().catch(error => {
       if (this.stopped) return {};
       console.error('[retention] cleanup failed:', error);
-      try { return this.record({ last_error: String((error as Error)?.message ?? error).slice(0, 300) }); } catch { return {}; }
+      const failure = { last_error: String((error as Error)?.message ?? error).slice(0, 300) };
+      try { this.record(failure); } catch {}
+      return failure;
     }).finally(() => { this.running = null; });
   }
   /** What the last cleanup did, for the storage page. */
@@ -159,6 +162,8 @@ export class RetentionCleanup {
     const started = new Date(this.now()).toISOString(), settings = retentionSettings(this.store);
     const manager = await this.syncManager(settings.manager_payload_days);
     const trajectories = await this.trajectories(settings), deliveries = await this.deliveries(settings.webhook_payload_days), evidence = await this.browserEvidence(settings);
+    const dispatchFailures={count:0,failed:0};
+    try{for(const row of this.store.all('SELECT id FROM repositories')){const days=trajectoryDays(settings,String(row.id));if(days===null)continue;const before=new Date(this.now()-days*day).toISOString();while(!this.stopped){const removed=pruneDispatchFailures(this.store,String(row.id),before);dispatchFailures.count+=removed;if(removed<500)break;await this.pause(this.options.pauseMs??20);}}}catch(error){dispatchFailures.failed=1;this.failure('dispatch_failures',error);}
     const commitChecks = { count: 0, failed: 0 };
     try {
       while (!this.stopped) {
@@ -169,7 +174,7 @@ export class RetentionCleanup {
       }
     } catch (error) { commitChecks.failed = 1; this.failure('commit_checks', error); }
     if (this.stopped) return {};
-    return this.record({ started_at: started, finished_at: new Date(this.now()).toISOString(), trajectories, deliveries, evidence, commit_checks: commitChecks, manager_window: manager, last_error: this.lastError });
+    return this.record({ started_at: started, finished_at: new Date(this.now()).toISOString(), trajectories, deliveries, evidence, commit_checks: commitChecks, dispatch_failures:dispatchFailures, manager_window: manager, last_error: this.lastError });
   }
 
   /** Tells the manager its window when it reports another; null when the manager did not answer. */

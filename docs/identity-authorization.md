@@ -89,8 +89,8 @@ principal 的 `authorization_revision` 只在账号失去原有有效权限时�
 npm ci
 npm run check
 npm test
-npx playwright test e2e/github-identity.spec.mjs e2e/admin-grants.spec.mjs
-node test/github-identity-docker.mjs
+npx playwright test -c test/e2e/playwright.config.mjs test/e2e/identity/github-identity.spec.mjs test/e2e/identity/admin-grants.spec.mjs
+node test/docker/identity/github-identity-docker.mjs
 ```
 
 Docker 验收使用随机 `bot-github-163-*` Compose 项目、专用镜像、卷与 localhost 随机端口，配本地 GitHub 固件，无真实 GitHub 写入。证据在 `.tmp/github-login-163/`，脚本只清理自己创建的资源。

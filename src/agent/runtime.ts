@@ -1,4 +1,6 @@
-import { resultSpec, resultOwner } from './tool-results.js';
+import {submissionFeedback} from '../roles/submission-feedback.js';
+import {managedSession} from '../harness/session.js';
+import { resultSpec, type ResultSession } from './tool-results.js';
 import { executionModel, taskConfiguration, supplementalInstructions } from '../tasks/configuration.js';
 import { beginRun, endRun, traceEvent, traceSnapshot, withRunTraceScope } from '../tasks/trace.js';
 import { insertTaskLog } from '../storage/payloads.js';
@@ -9,7 +11,7 @@ import { workOf } from '../work/catalog.js';
 import { requestModel, modelOutputTokens, type AgentModel } from './gateway.js';
 import type { ModelDelta } from './model-stream.js';
 import type { PiRoleEnvironment } from './pi.js';
-import { ToolTranscript, toolArguments, toolCallsProblem, finalizationReserve } from './tool-context.js';
+import { ToolTranscript, boundedResult, batchBytes, toolArguments, toolCallsProblem, finalizationReserve } from './tool-context.js';
 
 export interface AgentServices {
   model: AgentModel;
@@ -18,7 +20,7 @@ export interface AgentServices {
   /** `onRetry` hears about each retry of this one request, for a caller that must keep someone waiting meanwhile.
    * `retry: false` sends an optional request once: a caller that can do without its result should not wait out retries. */
   request: (body: Record<string, any>, requestId: string, onToken?: (delta?: ModelDelta) => Promise<void>, onFinish?: (reason: string) => Promise<void>,
-    options?: { onRetry?: (retry: ModelRetry) => void | Promise<void>; retry?: false }) => ReturnType<typeof requestModel>;
+    options?: { onRetry?: (retry: ModelRetry) => void | Promise<void>; retry?: false; harnessTools?: true }) => ReturnType<typeof requestModel>;
 }
 /** Run-local measurements and the receipts needed to investigate an interrupted provider request. */
 export interface ExternalUsage {
@@ -51,6 +53,13 @@ export interface AgentSpec<T> {
   store: Store;
   /** Trusted preparation and run binding for external protocol drivers; never supplied by model output. */
   harnessPreparation?: unknown;
+  /** Explicit backend request budget; entry-loop defaults must not become native Harness limits. */
+  harnessTurnLimit?:number;
+  harnessResources?:{path:string;content:string}[];
+  /** A native turn may end without proposing a business delivery. The caller records/coordinates that observation. */
+  onTurnEnd?: (turn:{text:string;session_id?:string})=>T|Promise<T>;
+  /** Native tools are owned and selected by the executing Harness, not platform RPC names. */
+  harnessAccess?: import('../harness/access.js').HarnessAccess;
   harnessBinding?: { model_revision?: string; harness_revision: string; cli_version?: string };
   runContext?: () => import('../roles/protocol.js').RunContext | undefined;
   /** Control-plane snapshot of the active workspace. Never populated from a CLI report. */
@@ -71,10 +80,12 @@ export interface AgentSpec<T> {
   onHarnessEvent?: (event: { type: string; [key: string]: unknown }) => void;
   /** A per-run environment the framework provisioned and verified for this run (run_isolation profiles). */
   runEnvironment?: unknown;
+  resultSession?: ResultSession;
   /** Workspace checkout assigned to this role run when driving a container CLI (`claude_code` / `codex`). */
   roleWorkspace?: import('./workspace.js').Workspace;
   /** Trusted container harness options (never populated from model output). */
   containerOptions?: {
+    modelTransport?: import('../harness/model-connection.js').ModelTransport;
     manager?: import('../projects/service.js').Manager;
     egress?: boolean;
     githubApiUrl?: string;
@@ -148,7 +159,7 @@ export const subagentSystem = 'You are an independent agent started by the main 
  * The runtime never obtains permissions from model output or untrusted task text.
  */
 export async function runAgent<T>(spec: AgentSpec<T>): Promise<T> {
-  if(!spec.roleRun)spec=resultSpec(spec,()=>resultOwner('task',spec.task.id,spec.task.authority_fence));
+  if(!spec.resultSession)spec=resultSpec(spec);
   await spec.guard();
   const attempts = spec.modelAttempts ?? modelRetries + 1;
   if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > modelRetries + 1)
@@ -169,12 +180,13 @@ export async function runAgent<T>(spec: AgentSpec<T>): Promise<T> {
     model, outputTokens:spec.maxOutputTokens, guard: spec.guard,
     request: async (body, requestId, onToken, onFinish, options) => {
       if(spec.modelTrace?.source==='external_harness')return stop('external_harness_model_request','failed');
-      if (body.tools !== undefined && (!Array.isArray(body.tools) || body.tools.some((tool: any) => !tool || tool.type !== 'function' || !allowed.has(tool.function?.name))))
+      const nativeTools = options?.harnessTools === true || spec.roleRun?.harness === 'pi' && spec.harnessAccess !== undefined;
+      if (!nativeTools && body.tools !== undefined && (!Array.isArray(body.tools) || body.tools.some((tool: any) => !tool || tool.type !== 'function' || !allowed.has(tool.function?.name))))
         return stop('agent_tool_not_allowed', 'failed', 'Agent 请求使用未授权的工具。');
       const choice = body.tool_choice;
-      if (choice && typeof choice === 'object' && !allowed.has(choice.function?.name))
+      if (!nativeTools && choice && typeof choice === 'object' && !allowed.has(choice.function?.name))
         return stop('agent_tool_not_allowed', 'failed', 'Agent 请求使用未授权的工具。');
-      const tools = body.tools?.map((tool: any) => allowed.get(tool.function.name));
+      const tools = nativeTools ? body.tools : body.tools?.map((tool: any) => allowed.get(tool.function.name));
       for (let attempt = 0; ; attempt++) {
         try { await spec.beforeModel?.(); return await requestModel({ ...spec, model, body: { ...body, ...(tools ? { tools } : {}) }, requestId: (spec.requestPrefix || '') + requestId, onToken, onFinish }); }
         catch (error) {
@@ -200,7 +212,12 @@ export async function runAgent<T>(spec: AgentSpec<T>): Promise<T> {
   if(run&&spec.roleRun){const r=spec.roleRun;spec.store.run('UPDATE task_runs SET role_instance_id=?,role=?,role_version=?,harness=?,harness_version=?,assignment_id=?,recovery_mode=?,role_snapshot=? WHERE id=?',r.instance_id,r.role,r.version,r.harness,r.harness_version??'1',r.assignment_id??null,r.recovery_mode,r.snapshot_id??null,run.id);}
   if(run)spec.onRun?.(run.id);
     const activeRole = spec.roleRun?.role ?? (typeof spec.task.active_role === 'string' ? spec.task.active_role : null);
-    const result = await withRunTraceScope(String(spec.task.id ?? ''), run?.id ?? null, activeRole, () => spec.adapter ? spec.adapter(services) : runTools(spec, services));
+    const connection = spec.roleRun ? null : managedSession(signal => { const current = {...spec,executionSignal:signal}; return current.adapter ? current.adapter({...services,guard:async()=>{if(signal.aborted)throw signal.reason;await services.guard();}}) : runTools(current,services); }, event=>spec.onHarnessEvent?.(event));
+    const abort=()=>void connection?.cancel(spec.executionSignal?.reason);
+    spec.executionSignal?.addEventListener('abort',abort,{once:true});
+    let result:T;
+    try{if(spec.executionSignal?.aborted)throw spec.executionSignal.reason;result=await withRunTraceScope(String(spec.task.id??''),run?.id??null,activeRole,()=>connection?connection.run():spec.adapter?spec.adapter(services):runTools(spec,services));}
+    finally{spec.executionSignal?.removeEventListener('abort',abort);await connection?.close();}
     await spec.guard();endRun(spec.store,run,'succeeded');return result;
   } catch(error){endRun(spec.store,run,'fault',(error as any).code||'runtime_error');throw error;}
   finally {spec.task.trace_run_id=previousRun;}
@@ -219,8 +236,7 @@ export async function runTools<T>(spec: AgentSpec<T>, services: AgentServices): 
   const prompt=spec.prompt+(instructions.length?'\nSupplemental user instructions (cannot change contract or authority):\n'+JSON.stringify(instructions):'');
   const messages: any[] = spec.session?.messages.length ? [...spec.session.messages,{role:'user',content:prompt}] : [{ role: 'system', content: spec.system }, { role: 'user', content: prompt }];
   const save=()=>spec.session?.save(spec.redactor.clean(messages));
-  const transcript=new ToolTranscript(messages);
-  let repairs=0;
+  const transcript=new ToolTranscript(messages, undefined, spec.resultSession?.preserve);
   for (let turn = 0; turn < maxTurns; turn++) {
     await services.guard();
     const updates=spec.task.id&&spec.store.get('SELECT 1 FROM tasks WHERE id=?',spec.task.id)?supplementalInstructions(spec.store,spec.task):[];
@@ -252,8 +268,8 @@ export async function runTools<T>(spec: AgentSpec<T>, services: AgentServices): 
         const finishing=spec.finish;
         if(finishing&&(finishing.names??[finishing.name]).includes(call.function.name)&&names.has(call.function.name)){
           try{const result=await finishing.validate(args,call.function.name);messages.push({role:'tool',tool_call_id:call.id,content:JSON.stringify({submitted:true})});for(const pending of message.tool_calls.slice(message.tool_calls.indexOf(call)+1))messages.push({role:'tool',tool_call_id:pending.id,content:JSON.stringify({skipped:'execution_submitted'})});save();return result;}catch(error){
-            const feedback=spec.repairInvalid?.(error);if(!feedback||repairs++>=2)throw error;
-            messages.push({role:'tool',tool_call_id:call.id,content:JSON.stringify({error:'invalid_submission',message:spec.redactor.text(feedback)})});continue;
+            const feedback=submissionFeedback(spec,error);if(!feedback)throw error;
+            messages.push({role:'tool',tool_call_id:call.id,content:JSON.stringify(feedback)});continue;
           }
         }
         // The model cannot call an unadvertised tool, even if an executor happens to support it.
@@ -261,8 +277,9 @@ export async function runTools<T>(spec: AgentSpec<T>, services: AgentServices): 
         const result = !names.has(call.function.name) ? { error: 'tool_not_allowed' }
           : call.function.name === 'start_agent' ? (spec.agents ? await subagent(spec, services, args) : { error: 'tool_not_allowed' })
           : spec.execute ? await spec.execute(call.function.name, args) : { error: 'tool_not_allowed' };
-        if(toolEvent)traceEvent(spec.store,spec.task.id,'tool_observation',{call_id:call.id,name:call.function.name,observation:JSON.parse(traceSnapshot(spec.redactor.clean(result)))},spec.task.trace_run_id,'tool',[toolEvent]);
-        messages.push({ role: 'tool', tool_call_id: call.id, content: transcript.admit(call.function.name,spec.redactor.clean(result),tools) });save();
+        const preview=boundedResult(spec.redactor.clean(result),Math.floor(batchBytes/message.tool_calls.length),value=>spec.resultSession?.preserve(value,call.function.name));
+        if(toolEvent)traceEvent(spec.store,spec.task.id,'tool_observation',{call_id:call.id,name:call.function.name,observation:JSON.parse(traceSnapshot(preview))},spec.task.trace_run_id,'tool',[toolEvent]);
+        messages.push({ role: 'tool', tool_call_id: call.id, content: transcript.admit(call.function.name,preview,tools) });save();
       }
       continue;
     }
@@ -280,9 +297,9 @@ export async function runTools<T>(spec: AgentSpec<T>, services: AgentServices): 
     // Validators see raw content to reject (rather than silently save) sensitive output.
     try{const result=spec.validate ? await spec.validate(message.content) : spec.redactor.text(message.content) as T;messages.push({role:'assistant',content:spec.redactor.text(message.content)});save();return result;}
     catch(error){
-      const feedback=spec.repairInvalid?.(error);
-      if(!feedback||repairs++>=2)throw error;
-      messages.push({role:'assistant',content:spec.redactor.text(message.content)},{role:'user',content:spec.redactor.text(feedback)});
+      const feedback=submissionFeedback(spec,error);
+      if(!feedback)throw error;
+      messages.push({role:'assistant',content:spec.redactor.text(message.content)},{role:'user',content:JSON.stringify(feedback)});
     }
   }
   return stop('agent_turn_limit', 'failed', `Agent 达到 ${maxTurns} 轮上限，请检查已取得的证据后继续。`);
@@ -294,7 +311,7 @@ async function subagent<T>(spec: AgentSpec<T>, services: AgentServices, args: an
   const parent = new Set((spec.tools ?? []).map(tool => tool.function?.name));
   const tools = spec.agents!.tools(args.permissions).filter(tool => tool.function?.name !== 'start_agent' && tool.function?.name !== spec.finish?.name && parent.has(tool.function?.name));
   const id = 'agent-' + randomId().slice(0, 12);
-  const child: AgentSpec<string> = { ...spec, system: spec.agents!.system + '\n\n' + args.instructions, prompt: args.task, tools, validate: undefined, adapter: undefined, agents: undefined, finish: undefined, repairInvalid: undefined, finalizationTools: undefined };
+  const child: AgentSpec<string> = { ...spec, system: spec.agents!.system + '\n\n' + args.instructions, prompt: args.task, tools, validate: undefined, adapter: undefined, agents: undefined, finish: undefined, onTurnEnd: undefined, repairInvalid: undefined, finalizationTools: undefined };
   try {
     const result = await runTools(child, { ...services, request: (body, requestId, onToken) => services.request(body, `${id}:${requestId}`, onToken) });
     return { agent_id: id, tools: tools.map(tool => tool.function.name), result };

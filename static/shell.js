@@ -1,6 +1,6 @@
 // Shared navigation wraps the existing console; business pages keep their routes and renderers.
 const consoleMedia = matchMedia('(max-width:767px)');
-let consoleOwner = null, consoleProject = null, consoleNavSignature = '', consoleRouteKey = null;
+let consoleOwner = null, consoleRouteKey = null;
 const consolePositions = new Map();
 // What a project is currently short of, from the installation snapshot: one read per project and page session, because the
 // navigation is redrawn on every route and must not turn a badge into a request per click.
@@ -40,7 +40,11 @@ const consoleAttention = {
   needs_help: ['需要帮助', 'Manager 已明确请求外部帮助；查看所需操作与恢复条件。'],
   needs_replan: ['需要重新规划', '查看验收缺口和已有产物，再决定下一步。']
 };
-function consoleInboxRoute() { return /^#\/inbox(?:\/(all|[1-9]\d*))?(?:\/(\d+))?$/.exec(location.hash); }
+function consoleInboxRoute() {
+  const project = projectRoute();
+  if (project?.section === 'inbox') return [location.hash, project.id, project.item || '0'];
+  return /^#\/inbox(?:\/(all|[1-9]\d*))?(?:\/(\d+))?$/.exec(location.hash);
+}
 // Return metadata stays in memory: no draft, credential or task detail is stored in a URL or browser storage.
 let consoleInboxReturn = null;
 function captureConsoleInbox(taskId) {
@@ -106,14 +110,10 @@ function taskOriginCaption(origin) {
   const handoff = !to ? '按原执行流程处理' : from && origin.source_role === origin.executor_role ? `${to}自己执行` : `${from}交给${to}`;
   return '来源：' + source + ' · ' + handoff;
 }
-function consoleScope() {
-  const inbox = consoleInboxRoute();
-  return projectRoute()?.id || (inbox ? (inbox[1] === 'all' ? null : inbox[1]) : consoleProject);
-}
 // #481: the phone's bottom bar owns the five primary destinations (项目 / 任务 / 待处理 / 助手 / 更多), so this page is
 // the supplement behind 更多. It must not repeat what the bar already carries, and it stays short enough to read on a
 // phone. #549: a project administrator's 更多 is only personal settings — usage, storage and the external
-// runner belong to the management area (#550), and project sections stay on the project page and 当前页面 picker.
+// runner belong to the management area (#550). Scoped project work and settings are also available here.
 function consoleGroups() {
   const id = consoleScope(), repo = repositories.find(r => String(r.id) === id);
   const groups = [];
@@ -127,7 +127,7 @@ function consoleGroups() {
   // installation archives and robot accounts live in one 管理 group. Permissions are unchanged:
   // a project administrator only sees the pages their role can already open.
   const management = [
-    ['#/costs', '用量与成本', '按项目、日期与工作类型查看'],
+    ...(!(repo && me.role === 'super_admin') ? [[consolePageAddress('costs', repo ? id : null), '用量与成本', '按项目、日期与工作类型查看']] : []),
     ['#/external', '外部执行端', '接入与连接诊断'],
     ['#/settings/storage', '存储', '本人项目的轨迹与数据量']
   ];
@@ -140,33 +140,41 @@ function consoleGroups() {
     );
   }
   const adminGroup = { title: '管理', items: management, testid: 'console-admin-group' };
-  if (me.role !== 'super_admin') {
-    groups.push({ title: '设置', wide: true, items: personal }, { ...adminGroup, wide: true });
-    return groups;
-  }
-  // 管理助手 is the bar's 助手 destination, and each project section is one address the phone can reach from here.
-  if (repo) groups.push({ title: '当前项目', items: projectSections
-    .filter(([key]) => key !== 'management')
-    .map(([key, name]) => [`#/projects/${id}/${key}`, name, repo.full_name]) });
-  // `wide` (#557) keys the full-row layout on the group itself: 当前项目 and 个人与平台 share the first row, and the
-  // longer 管理 group (#550) spans the full row under them with its entries in three columns.
-  groups.push({ title: '个人与平台', items: personal }, { ...adminGroup, wide: true });
+  if (repo) groups.push({ title: '当前项目', items: [
+    ...projectWorkSections().filter(([key]) => ['release', 'knowledge', 'activity'].includes(key)),
+    ['basic', t('nav.project_settings')], ...projectWorkSections().filter(([key]) => key === 'costs')
+  ].map(([key, name]) => [`#/projects/${id}/${key}`, name, repo.full_name]) });
+  groups.push({ title: me.role === 'super_admin' ? '个人与平台' : '设置', wide: me.role !== 'super_admin', items: personal }, { ...adminGroup, wide: true });
   return groups;
 }
-// #549: a project administrator's desktop primary nav is 项目 / 管理助手 / 任务看板 / 待处理, plus a visible
-// 更多功能 entry so 身份与权限 stays reachable at desktop widths (the account menu is phone-only). That address is
-// #/identity since #615; #/preferences stays an alias so old links keep working.
-// 用量与成本, 身份与权限 and 存储 leave the sidebar itself; they remain in 更多 (and, for super
-// administrators, in the pinned settings nav).
-function applyConsoleNavVisibility() {
-  if (!me) return;
-  const isSuper = me.role === 'super_admin';
-  for (const tab of ['costs', 'preferences', 'settings']) {
-    const node = document.querySelector('#tabs [data-tab="' + tab + '"]');
-    if (node) node.hidden = !isSuper;
-  }
-  const more = document.getElementById('console-more-link') || document.querySelector('#tabs [data-tab="more"]');
-  if (more) more.hidden = isSuper;
+// Real links expose their scope before activation. Reconcile in place so async page reads do not discard keyboard focus.
+function syncConsoleNavigation(repo) {
+  const project = projectRoute(), id = repo ? String(repo.id) : null, isSuper = me.role === 'super_admin';
+  const entries = id ? projectWorkSections() : [['projects', t('nav.projects')], ['board', t('nav.board')], ['inbox', t('nav.inbox')], ['management', t('nav.management')], ...(isSuper ? [['costs', t('nav.costs')]] : [])];
+  const active = tab === 'task' ? null : project ? (projectSettingsSections.some(([key]) => key === project.section) ? 'basic' : project.section) : ['identity', 'preferences', 'external', 'conversations'].includes(tab) ? 'preferences' : tab;
+  const primary = document.querySelector('.console-primary-nav'), settings = document.querySelector('.console-settings-nav');
+  const rows = [...entries.map(([key, caption]) => ({ key, caption, href: consolePageAddress(key, id) })),
+    ...(id ? [{ key: 'basic', caption: t('nav.project_settings'), href: `#/projects/${id}/basic`, group: t('nav.project_settings_group') }] : []),
+    ...(!isSuper ? [{ key: 'more', caption: t('nav.more'), href: '#/more' }] : [])];
+  const pinned = isSuper ? [{ key: 'preferences', caption: t('nav.preferences'), href: '#/identity' }, { key: 'settings', caption: t('nav.settings'), href: '#/settings/work-computers' }] : [];
+  const reconcile = (container, items) => {
+    const signature = JSON.stringify(items);
+    if (container.dataset.entries !== signature) {
+      const nodes = [];
+      for (const item of items) {
+        if (item.group) nodes.push(element('p', item.group, 'console-nav-label'));
+        const a = consoleLink(item.href, item.caption); a.dataset.consoleNav = item.key;
+        if (item.key === 'inbox') a.id = 'console-inbox-link';
+        if (item.key === 'more') { a.id = 'console-more-link'; a.dataset.testid = 'console-more-link'; }
+        const icon = consoleIcon(item.key === 'preferences' ? 'user' : item.key === 'more' ? 'more' : consoleIconName(item.href)); icon.classList.add('console-nav-icon'); a.prepend(icon); nodes.push(a);
+      }
+      container.replaceChildren(...nodes); container.dataset.entries = signature;
+    }
+    for (const a of container.querySelectorAll('[data-console-nav]')) {
+      if (a.dataset.consoleNav === active) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+    }
+  };
+  reconcile(primary, rows); reconcile(settings, pinned); settings.hidden = !pinned.length;
 }
 function syncConsoleShell() {
   const signedIn = !!me && !$('workspace').hidden;
@@ -179,62 +187,44 @@ function syncConsoleShell() {
   $('console-sidebar').hidden = !signedIn;
   $('console-mobile-nav').hidden = !signedIn;
   $('console-location').hidden = !signedIn;
+  $('console-mobile-scope').hidden = !signedIn;
   if (!signedIn || consoleOwner !== me.id) {
     if (typeof resetTaskCreation === 'function') resetTaskCreation();
     if (typeof resetKnowledgeFiles === 'function') resetKnowledgeFiles();
     if (typeof resetScheduleViews === 'function') resetScheduleViews();
     if (typeof resetBoard === 'function') resetBoard();
     if (typeof resetPersonalApps === 'function') resetPersonalApps();
-    consoleOwner = me?.id || null; consoleProject = null; consoleNavSignature = ''; consolePositions.clear(); consoleRouteKey = null;
-    // #480: the shared default is this session's choice, so a different user never inherits it.
-    if (typeof setConsoleDefaultProject === 'function') setConsoleDefaultProject(null);
-    const clearedPicker = $('console-project'); if (clearedPicker) clearedPicker.value = '';
+    consoleOwner = me?.id || null; consolePositions.clear(); consoleRouteKey = null;
+    syncConsoleScope();
+    closeScopePicker(false);
     $('console-secondary-nav').replaceChildren(); $('console-page').replaceChildren();
     setAccountMenu(false);
     // #481: the bar's assistant state belongs to one session. A different owner starts idle and read, so a turn left
     // running or a reply left unread by the previous user never survives the sign-out.
     updateConsoleAssistant();
   }
-  if (!signedIn) return;
-  applyConsoleNavVisibility();
+  if (!signedIn) {
+    const globalHeader = $('console-project-header');
+    globalHeader.hidden = true;
+    globalHeader.querySelector('.project-head')?.remove(); globalHeader.querySelector('.workbench-tabs')?.remove();
+    const locationBox = $('console-location'), permission = $('console-permission');
+    if (permission.parentElement !== locationBox) locationBox.insertBefore(permission, locationBox.querySelector('.console-section-picker'));
+    syncScopePicker(); return;
+  }
   // The menu names the same person the header used to print beside the sign-out button.
   $('console-account-login').textContent = userDisplayName(me);
   $('console-account-role').textContent = currentRoleText();
-  const project = projectRoute(), inbox = consoleInboxRoute();
-  const routed = project?.id || (inbox ? (inbox[1] === 'all' ? null : inbox[1]) : null) || null;
-  // #480: the address wins where it names a project; the board, costs and management pages follow the shell picker.
-  // A page that names no project keeps the project the reader last stood in, and only a chosen default replaces it.
-  if (project || inbox) {
-    consoleProject = routed;
-    // The picker shows this project, so it is also the default the board, costs and management read. An address that
-    // names a project must not leave those three describing another one.
-    if (routed && typeof setConsoleDefaultProject === 'function') setConsoleDefaultProject(routed);
-    // #494: an inbox address that names no project shows 「全部项目」 in the picker, so the shared default has to become empty
-    // as well. Otherwise the picker, the board, usage and the assistant would read two different values for one choice.
-    else if (inbox && typeof setConsoleDefaultProject === 'function') setConsoleDefaultProject(null);
-  } else if (typeof consoleDefaultProject === 'function' && consoleDefaultProject()) consoleProject = consoleDefaultProject();
-  const repo = repositories.find(r => String(r.id) === consoleProject);
-  // A revoked project is never kept in the project picker merely because it was selected earlier.
-  if (!repo && consoleProject) { consoleProject = null; if (typeof setConsoleDefaultProject === 'function') setConsoleDefaultProject(null); }
+  const project = projectRoute();
+  syncConsoleScope();
+  const consoleProject = consoleScope(), repo = repositories.find(r => String(r.id) === consoleProject);
+  syncConsoleNavigation(repo);
+  if (typeof syncManagementScope === 'function') syncManagementScope();
   // A GitHub full name carries its owner, so the picker groups by organization without asking for another projection:
   // the same repository name can arrive from two owners and then must not look like one project.
-  const organization = r => (r.full_name || '').includes('/') ? r.full_name.split('/')[0] : (r.account_name || '其他组织');
-  const signature = JSON.stringify([me.id, consoleProject, typeof currentLocale === 'function' ? currentLocale() : '', repositories.map(r => [r.id, r.full_name, organization(r)])]);
-  if (signature !== consoleNavSignature) {
-    consoleNavSignature = signature;
-    const picker = $('console-project'); picker.replaceChildren(new Option(t('nav.all_projects'), ''));
-    const groups = new Map();
-    for (const r of repositories) { const name = organization(r); if (!groups.has(name)) groups.set(name, []); groups.get(name).push(r); }
-    for (const [name, rows] of [...groups].sort((left, right) => left[0].localeCompare(right[0]))) {
-      const group = document.createElement('optgroup'); group.label = name;
-      for (const r of rows) group.append(new Option(r.full_name, r.id));
-      picker.append(group);
-    }
-    picker.value = consoleProject || '';
-  }
+  const organization = scopeOrganization;
+  syncScopePicker();
   const platform = tab === 'settings', personal = !project && ['preferences', 'identity', 'external', 'conversations'].includes(tab);
   const settingsContext = platform && typeof settingsPageTitle === 'function' ? settingsPageTitle() : t('nav.settings');
-  $('console-project').closest('label').hidden = platform;
   $('console-area').textContent = platform ? (typeof settingsScope === 'function' ? settingsScope() : t('nav.platform')) : project ? t('nav.project_workspace') : personal ? t('nav.personal') : t('nav.workspace');
   // The scope bar names both halves of the current address: a project name alone does not say which organization it is in.
   const shortName = r => (r.full_name || '').includes('/') ? r.full_name.split('/').slice(1).join('/') : r.full_name;
@@ -242,7 +232,7 @@ function syncConsoleShell() {
   // breadcrumb made two visible titles. The crumb stays "个人设置" and the h1 names the page.
   // An installed repository nobody has started is no project yet; its cached installation row still names it.
   const unstarted = project && !repo ? consoleGaps.get(String(project.id)) : null;
-  $('console-context').textContent = project ? (repo ? organization(repo) + ' · ' + shortName(repo)
+  $('console-context').textContent = project ? (repo ? organization(repo) + ' / ' + shortName(repo) + (project.section === 'overview' ? '' : ' / ' + (projectSectionCaption(project.section) || '找不到页面'))
     : unstarted?.registered === false ? organization(unstarted) + ' · ' + shortName(unstarted) + ' · ' + t('nav.unstarted')
       : typeof current !== 'undefined' && current?.unavailable && String(current.id) === String(project.id) ? t(current.unavailable === 'missing' ? 'nav.project_not_found' : 'nav.project_unavailable') : t('nav.reading_project'))
     : tab === 'identity' || tab === 'preferences' ? '' : ({ more: t('nav.more'), inbox: t('nav.inbox'), settings: settingsContext, 'repository-onboarding': t('nav.repository_onboarding') }[tab] || titles[tab] || t('identity.title'));
@@ -256,9 +246,22 @@ function syncConsoleShell() {
     const row = consoleGaps.get(String(repo.id));
     permission.replaceChildren(...(row?.access_gaps?.length ? [permissionBadge(row)] : []));
   }
+  const locationBox = $('console-location'), overview = project?.section === 'overview', globalHeader = $('console-project-header');
+  const activeOverview = overview && String(current?.id) === String(project.id) && current.section === 'overview' && !!current.repository && !current.unavailable;
+  const existingHead = globalHeader.querySelector('.project-head');
+  const nextHead = activeOverview ? $('project-page').querySelector('.project-head') : null;
+  if (nextHead && nextHead !== existingHead) { existingHead?.remove(); globalHeader.prepend(nextHead); }
+  else if (!nextHead && (!activeOverview || existingHead?.dataset.projectId !== String(project.id))) existingHead?.remove();
+  const existingTabs = globalHeader.querySelector('.workbench-tabs');
+  const tabs = activeOverview ? $('project-page').querySelector('.workbench-tabs') : null;
+  if (tabs && tabs !== existingTabs) { existingTabs?.remove(); globalHeader.append(tabs); }
+  else if (!tabs && (!activeOverview || existingTabs?.dataset.projectId !== String(project.id))) existingTabs?.remove();
+  if (activeOverview) globalHeader.append(permission);
+  else if (permission.parentElement !== locationBox) locationBox.insertBefore(permission, locationBox.querySelector('.console-section-picker'));
+  globalHeader.hidden = !activeOverview;
+  locationBox.hidden = !signedIn || activeOverview && !consoleMedia.matches;
   if (repo && me.role === 'super_admin' && !consoleGaps.has(String(repo.id))) setTimeout(() => loadConsoleGaps(String(repo.id)), 0);
 
-  $('console-inbox-link').href = '#/inbox' + (consoleProject ? '/' + consoleProject : '');
   const scopeKey = project ? 'project:' + project.id : platform ? 'settings' : personal ? 'personal' : '';
   const secondary = project ? $('project-page').querySelector('.project-nav')
     : platform ? $('settings-panel').querySelector('.project-nav')
@@ -266,28 +269,26 @@ function syncConsoleShell() {
   if (secondary) {
     secondary.dataset.navScope = scopeKey;
     $('console-secondary-nav').replaceChildren(secondary);
-  } else if (!scopeKey || $('console-secondary-nav').firstElementChild?.dataset.navScope !== scopeKey) {
+  } else if (!scopeKey || project && !projectSettingsSections.some(([key]) => key === project.section) || $('console-secondary-nav').firstElementChild?.dataset.navScope !== scopeKey) {
     $('console-secondary-nav').replaceChildren();
   }
   $('console-secondary-nav').hidden = !$('console-secondary-nav').childElementCount;
   const nav = $('console-secondary-nav').querySelector('nav'), sectionPicker = $('console-section');
   $('console-section-label').hidden = !nav;
   sectionPicker.replaceChildren();
-  // #481: the picker keeps the groups the page's own navigation draws, so a long project page stays readable on a phone
-  // instead of flattening every entry into one list.
-  // #565/#707: a work page draws only the two-item breadcrumb and a settings page only the settings categories, so the
-  // picker takes the 项目入口 hub groups instead: ← 项目入口 first, then 项目工作 / 设置 with every original entry. The
-  // 设置 group is the same list (projectSettingsSections) the settings nav draws, so both point at the same addresses.
-  if (nav && nav.dataset.pickerProject && typeof projectSectionGroups !== 'undefined') {
-    const project = nav.dataset.pickerProject, here = nav.querySelector('[aria-current=page]')?.getAttribute('href');
-    sectionPicker.append(new Option('← 项目入口', `#/projects/${project}/menu`, false, here === `#/projects/${project}/menu`));
-    for (const [title, items] of projectSectionGroups) {
+  // Work navigation and settings categories share the sidebar's role-aware source.
+  if (project && repo) {
+    $('console-section-label').hidden = false;
+    const here = `#/projects/${project.id}/${project.section}`, caption = projectSectionCaption(project.section);
+    for (const [title, items] of projectNavigationGroups()) {
       const group = document.createElement('optgroup'); group.label = title;
-      for (const [key, caption] of items) {
-        const href = `#/projects/${project}/${key}`;
-        group.append(new Option(caption, href, false, href === here));
+      for (const [key, name] of items) {
+        const href = `#/projects/${project.id}/${key}`; group.append(new Option(name, href, false, href === here));
       }
       sectionPicker.append(group);
+    }
+    if (![...sectionPicker.options].some(option => option.value === here)) {
+      const missing = new Option(caption || '找不到页面', here, true, true); missing.disabled = true; sectionPicker.prepend(missing);
     }
   } else if (nav) {
     let group = null;
@@ -298,11 +299,6 @@ function syncConsoleShell() {
       if (child.matches?.('a')) (group || sectionPicker).append(new Option(child.textContent, child.getAttribute('href'), false, child.getAttribute('aria-current') === 'page'));
     }
   }
-  // #642: an unknown project page has no entry of its own; the picker names that instead of showing the first section.
-  // This also covers the #565 hub picker, where nothing in the breadcrumb is aria-current on an unknown subpage.
-  if (nav && project && $('project-page').querySelector('[data-page-not-found]')) {
-    const missing = new Option('找不到页面', '', true, true); missing.disabled = true; sectionPicker.prepend(missing);
-  }
   syncConsoleMobileCurrent();
   $('console-sidebar').classList.toggle('console-platform', platform);
 }
@@ -312,7 +308,7 @@ function syncConsoleMobileCurrent() {
   const chat = typeof managementChatState === 'function' ? managementChatState() : null;
   const chosen = chat?.open ? 'assistant' : ['projects', 'board', 'inbox'].includes(tab) ? tab : ['design', 'not-found'].includes(tab) ? '' : 'more';
   for (const a of $('console-mobile-nav').querySelectorAll('a')) {
-    if (a.dataset.page === 'inbox') a.href = '#/inbox' + (consoleProject ? '/' + consoleProject : '');
+    if (['projects', 'board', 'inbox'].includes(a.dataset.page)) a.href = consolePageAddress(a.dataset.page);
     if (a.dataset.page === chosen) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   }
 }
@@ -363,12 +359,10 @@ async function renderConsoleInbox(request) {
   const head = element('div', '', 'console-page-head'), title = element('div');
   title.append(element('p', '需要关注', 'eyebrow'), element('h1', '待处理'), element('p', '需要关注的真实任务；自动排队和正常执行不计入。具体操作以当前权限和任务回执为准。', 'muted'));
   head.append(title); page.replaceChildren(head);
-  const filters = element('div', '', 'console-inbox-filters'), label = element('label', '项目'), picker = document.createElement('select');
-  picker.add(new Option('所有有权访问的项目', '')); repositories.forEach(r => picker.add(new Option(r.full_name, r.id))); picker.value = id;
-  picker.addEventListener('change', () => { location.hash = '#/inbox' + (picker.value ? '/' + picker.value : ''); }); label.append(picker);
-  filters.append(label, button('刷新待处理', () => renderConsoleInbox(++renderVersion))); page.append(filters);
+  const filters = element('div', '', 'console-inbox-filters');
+  filters.append(button('刷新待处理', () => renderConsoleInbox(++renderVersion))); page.append(filters);
   // #934: start requests (#933) wait for a super administrator before any task exists, so they head the inbox.
-  if (me.role === 'super_admin' && typeof renderStartRequests === 'function') {
+  if (!id && me.role === 'super_admin' && typeof renderStartRequests === 'function') {
     const requests = element('div', '', 'console-start-requests'); page.append(requests);
     void renderStartRequests(requests, () => request === renderVersion && tab === 'inbox' && requests.isConnected);
   }
@@ -382,7 +376,7 @@ async function renderConsoleInbox(request) {
     if (!rows.length) {
       body.append(consoleState('当前范围没有待处理任务', '这表示未发现上述等待或失败事项，不代表服务、CI 或其他任务已经全部成功。'));
       const next = element('div', '', 'console-inbox-next');
-      next.append(consoleLink('#/board', '查看任务看板'), consoleLink('#/new-task' + (id ? '/' + id : ''), '新建任务'));
+      next.append(consoleLink(consolePageAddress('board', id || null), '查看任务看板'), consoleLink(consolePageAddress('new-task', id || null), '新建任务'));
       body.append(next);
     } else {
       body.append(element('p', `本页 ${rows.length} 项 · 按最近状态变更时间从早到晚排列`, 'muted'));
@@ -391,7 +385,7 @@ async function renderConsoleInbox(request) {
       }
     }
     const paging = element('nav', '', 'console-inbox-paging'); paging.setAttribute('aria-label', '待处理分页');
-    const href = next => '#/inbox/' + (id || 'all') + '/' + next;
+    const href = next => id ? consolePageAddress('inbox', id) + '/' + next : '#/inbox/all/' + next;
     // The explicit "all" segment preserves an unscoped page when navigating pagination links.
     if (offset) paging.append(consoleLink(href(Math.max(0, offset - 50)), '上一页'));
     if (result.tasks.length > 50) paging.append(consoleLink(href(offset + 50), '下一页'));
@@ -493,12 +487,12 @@ consoleIcon.shapes = {
 function consoleIconName(href) {
   const path = String(href || '').replace(/^#/, '');
   if (/^\/projects\/[^/]+\/overview/.test(path) || path === '/projects') return 'home';
-  if (/^\/board/.test(path)) return 'board';
-  if (/^\/new-task/.test(path)) return 'plus';
-  if (/^\/inbox/.test(path)) return 'inbox';
+  if (/\/board(?:\/|$)/.test(path)) return 'board';
+  if (/\/new-task(?:\/|$)/.test(path)) return 'plus';
+  if (/\/inbox(?:\/|$)/.test(path)) return 'inbox';
   if (/\/management(\/|$)/.test(path) || path === '/management') return 'chat';
   if (/^\/conversations/.test(path)) return 'messages';
-  if (/^\/costs/.test(path)) return 'chart';
+  if (/\/costs(?:\/|$)/.test(path)) return 'chart';
   if (/feishu/.test(path)) return 'message';
   if (/^\/identity/.test(path)) return 'badge';
   if (/\/external(\/|$)/.test(path)) return 'plug';
@@ -525,60 +519,28 @@ function consoleIconName(href) {
 
 function initConsoleShell() {
   const sidebar = $('console-sidebar');
-  const kicker = element('p', t('nav.workspace'), 'console-nav-label'); kicker.setAttribute('data-i18n', 'nav.workspace');
+  initScopePicker();
   const scopeCaption = element('span', t('nav.switch_project')); scopeCaption.setAttribute('data-i18n', 'nav.switch_project');
-  const scope = element('label', '', 'console-project-picker'); scope.append(scopeCaption);
-  const picker = document.createElement('select');
-  picker.id = 'console-project'; picker.setAttribute('aria-label', t('nav.switch_project')); picker.setAttribute('data-i18n', 'nav.switch_project'); picker.setAttribute('data-i18n-attr', 'aria-label');
-  // #480: the picker is the console-wide default. The board and the usage page read that default, so choosing a project
-  // there re-reads the page in place and keeps the reader where the scope applies; the management assistant follows the
-  // default itself (its own scope control and conversation move together), so re-rendering that page would open a second
-  // conversation for one choice. Every other page is a navigation surface, unchanged: it opens the chosen project (or the
-  // projects list), because its address names what it shows.
-  picker.addEventListener('change', () => {
-    const id = picker.value || null;
-    if (typeof setConsoleDefaultProject === 'function') setConsoleDefaultProject(id);
-    consoleProject = id;
-    if (/^#\/(board|costs)(\/|$)/.test(location.hash)) route().catch(error);
-    // The open assistant follows the default itself, so this page is not re-rendered. The console link that names the
-    // project comes from that same default and is written only in syncConsoleShell(), so it is refreshed here too (#494).
-    else if (/^#\/management(\/|$)/.test(location.hash)) syncConsoleShell();
-    else location.hash = id ? `#/projects/${id}/overview` : '#/projects';
-  }); scope.append(picker);
+  const scope = element('div', '', 'console-project-picker'); scope.append(scopeCaption, scopePickerButton('console-project'));
   const tabs = $('tabs'), primary = element('div', '', 'console-primary-nav'), settings = element('div', '', 'console-settings-nav');
-  settings.setAttribute('role', 'group'); settings.setAttribute('aria-label', t('nav.settings_group')); settings.setAttribute('data-i18n', 'nav.settings_group'); settings.setAttribute('data-i18n-attr', 'aria-label');
-  settings.append(tabs.querySelector('[data-tab=preferences]'), tabs.querySelector('[data-tab=settings]'));
-  primary.append(kicker, ...tabs.children);
-  const inbox = consoleLink('#/inbox', t('nav.inbox')); inbox.id = 'console-inbox-link'; const inboxLabel = inbox.querySelector('span'); if (inboxLabel) inboxLabel.setAttribute('data-i18n', 'nav.inbox'); primary.append(inbox);
-  // Project administrators have no pinned 个人设置 / 全局设置 and the account menu is phone-only, so
-  // 更多功能 has to stay visible in the desktop sidebar or those pages have no on-screen entry.
-  const more = consoleLink('#/more', t('nav.more'));
-  const moreLabel = more.querySelector('span'); if (moreLabel) moreLabel.setAttribute('data-i18n', 'nav.more');
-  more.id = 'console-more-link';
-  more.dataset.tab = 'more';
-  more.dataset.testid = 'console-more-link';
-  primary.append(more);
-  // Keep the original tabs and their click handling, but let only the work navigation scroll above the settings.
+  settings.setAttribute('role', 'group'); settings.setAttribute('aria-label', t('nav.settings_group'));
+  settings.setAttribute('data-i18n', 'nav.settings_group'); settings.setAttribute('data-i18n-attr', 'aria-label');
   tabs.replaceChildren(primary, settings); sidebar.append(scope, tabs);
-  const sidebarIcons = { projects: 'home', management: 'chat', board: 'board', costs: 'chart', preferences: 'user', settings: 'gear', more: 'more' };
-  for (const item of tabs.querySelectorAll('[data-tab], #console-inbox-link')) {
-    const name = item.id === 'console-inbox-link' ? 'inbox' : sidebarIcons[item.dataset.tab];
-    if (!name || item.querySelector('.console-icon')) continue;
-    // The static tab buttons carry data-i18n themselves; a locale switch would set their textContent and drop the
-    // icon, so move the key onto a label span the way the inbox and 更多功能 links already have it.
-    const key = item.getAttribute('data-i18n');
-    if (key && !item.querySelector('[data-i18n]')) {
-      const label = document.createElement('span'); label.setAttribute('data-i18n', key); label.textContent = item.textContent;
-      item.removeAttribute('data-i18n'); item.replaceChildren(label);
-    }
-    const icon = consoleIcon(name); icon.classList.add('console-nav-icon'); item.prepend(icon);
-  }
+  const globalHeader = element('div', '', 'console-project-header'); globalHeader.id = 'console-project-header'; globalHeader.hidden = true;
+  document.querySelector('body > header').insertBefore(globalHeader, $('header-tools'));
   const locationBox = element('div', '', 'console-location'); locationBox.id = 'console-location'; locationBox.hidden = true;
   const area = element('span', '', 'eyebrow'), context = element('span'); area.id = 'console-area'; context.id = 'console-context';
   const permission = element('span', '', 'console-permission'); permission.id = 'console-permission';
   locationBox.append(area, context, permission);
   const secondary = element('div', '', 'console-secondary-nav'); secondary.id = 'console-secondary-nav'; secondary.hidden = true;
-  $('main-content').prepend(locationBox, secondary);
+  const mobileScope = element('div', '', 'console-mobile-scope'); mobileScope.id = 'console-mobile-scope'; mobileScope.hidden = true;
+  mobileScope.append(scopePickerButton('console-mobile-project'));
+  $('main-content').prepend(mobileScope, locationBox, secondary);
+  // The fixed assistant page and the board's filter scroller share the space the mobile range bar consumes.
+  new ResizeObserver(() => {
+    const height = mobileScope.getBoundingClientRect().height;
+    document.documentElement.style.setProperty('--console-scope-height', height ? Math.ceil(height + 12) + 'px' : '0px');
+  }).observe(mobileScope);
   const sectionCaption = element('span', t('nav.current_page')); sectionCaption.setAttribute('data-i18n', 'nav.current_page');
   const section = element('label', '', 'console-section-picker'); section.append(sectionCaption);
   const sectionPicker = document.createElement('select'); section.id = 'console-section-label'; sectionPicker.id = 'console-section'; sectionPicker.setAttribute('aria-label', t('nav.current_page')); sectionPicker.setAttribute('data-i18n', 'nav.current_page'); sectionPicker.setAttribute('data-i18n-attr', 'aria-label'); section.hidden = true;

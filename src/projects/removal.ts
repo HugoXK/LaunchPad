@@ -25,14 +25,14 @@ export function deleteProjectRecords(store: Store, id: string, options: { files?
     [`DELETE FROM schedule_business_runs WHERE occurrence_id IN (SELECT id FROM schedule_occurrences WHERE project_id=?)`, 1],
     ...['schedule_usage', 'schedule_notification_slots', 'schedule_budgets'].map((table): [string, number] => [
       `DELETE FROM ${table} WHERE (scope='project' AND scope_id=?) OR (scope='schedule' AND (scope_id IN (${schedules}) OR scope_id IN (${notificationSubscriptions})))`, 3]),
-    ...['notification_outbox', 'schedule_occurrences', 'schedules', 'notification_subscriptions', 'schedule_events', 'schedule_operations', 'schedule_audit']
+    ...['notification_outbox', 'schedule_occurrences', 'schedules', 'notification_subscriptions', 'schedule_events', 'schedule_operations', 'schedule_audit', 'schedule_migrations']
       .map((table): [string, number] => [`DELETE FROM ${table} WHERE project_id=?`, 1]),
     [`DELETE FROM external_event_cursors WHERE client_id IN (${clients})`, 1], [`DELETE FROM external_grants WHERE client_id IN (${clients})`, 1],
     [`DELETE FROM external_deliveries WHERE repository_id=? OR subscription_id IN (${subscriptions}) OR source_id IN (${deliveries})`, 4],
     [`DELETE FROM external_subscriptions WHERE repository_id=? OR client_id IN (${clients})`, 2], ['DELETE FROM external_clients WHERE repository_id=?', 1],
     [`DELETE FROM external_events WHERE repository_id=? OR source_id IN (${deliveries})`, 2],
     ['DELETE FROM board_values WHERE repository_id=?', 1], ['DELETE FROM board_objects WHERE repository_id=?', 1], ['DELETE FROM commit_checks WHERE repository_id=?', 1],
-    ['DELETE FROM review_sessions WHERE repository_id=?', 1], ['DELETE FROM task_workspaces WHERE repository_id=?', 1], ['DELETE FROM worktree_bindings WHERE repository_id=?', 1], ['DELETE FROM worktree_plans WHERE repository_id=?', 1], ['DELETE FROM worktrees WHERE repository_id=?', 1], ['DELETE FROM review_objects WHERE repository_id=?', 1], ['DELETE FROM review_summaries WHERE repository_id=?', 1],
+['DELETE FROM task_workspaces WHERE repository_id=?', 1], ['DELETE FROM worktree_bindings WHERE repository_id=?', 1], ['DELETE FROM worktree_plans WHERE repository_id=?', 1], ['DELETE FROM worktrees WHERE repository_id=?', 1], ['DELETE FROM review_objects WHERE repository_id=?', 1], ['DELETE FROM review_summaries WHERE repository_id=?', 1],
     ...['actions_failure_reports', 'actions_failure_issues', 'actions_failure_attempts', 'actions_failure_runs', 'actions_failure_scans'].map((table): [string, number] => [`DELETE FROM ${table} WHERE repository_id=?`, 1]),
     ...['role_assignments', 'role_instances', 'review_updates', 'task_logs', 'task_tools', 'github_effects', 'development_candidates', 'task_metrics'].map((table): [string, number] => [`DELETE FROM ${table} WHERE task_id IN (${tasks})`, 1]),
     [`DELETE FROM model_requests WHERE repository_id=? OR task_id IN (${tasks})`, 2],
