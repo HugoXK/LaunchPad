@@ -1,0 +1,18 @@
+0 verbose cli /usr/bin/node /usr/bin/npm
+1 info using npm@10.9.8
+2 info using node@v22.23.2
+3 silly config load:file:/usr/lib/node_modules/npm/npmrc
+4 silly config load:file:/home/xuke/work/launchpad-dev-1/.local/work/ev1060wt/.npmrc
+5 silly config load:file:/home/xuke/.npmrc
+6 silly config load:file:/usr/etc/npmrc
+7 verbose title npm run build
+8 verbose argv "run" "build"
+9 verbose logfile logs-max:10 dir:/home/xuke/work/launchpad-dev-1/.local/work/ev1060wt/.local-tmp/npmlogs/2026-11-18T09_49_14_680Z-
+10 verbose logfile /home/xuke/work/launchpad-dev-1/.local/work/ev1060wt/.local-tmp/npmlogs/2026-11-18T09_49_14_680Z-debug-0.log
+11 silly logfile done cleaning log files
+12 verbose cwd /home/xuke/work/launchpad-dev-1/.local/work/ev1060wt
+13 verbose os Linux 5.15.0-194-generic
+14 verbose node v22.23.2
+15 verbose npm  v10.9.8
+16 verbose exit 0
+17 info ok

@@ -1,0 +1,3 @@
+(node:4) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+[slow-sql] 787 ms transaction (155 statements, commit 24 ms)

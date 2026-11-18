@@ -1,0 +1,28 @@
+[
+  {
+    "width": 768,
+    "route": "#/board",
+    "slug": "board",
+    "selector": "#console-project",
+    "label": "切换项目：全部项目",
+    "visible": "⊞ 全部项目 3 个项目 ⌄",
+    "violations": 1,
+    "overflow": false,
+    "snapshot": "- button \"切换项目：全部项目\": |   - strong: 全部项目 |   - text: 3 个项目",
+    "file": "/home/xuke/work/launchpad-dev-1/.local/ev1060/1060-board-768-base.png",
+    "sha256": "fe8d5b46455edfd2"
+  },
+  {
+    "width": 768,
+    "route": "#/settings/storage",
+    "slug": "settings-storage",
+    "selector": "#console-project",
+    "label": "切换项目：全部项目",
+    "visible": "⊞ 全部项目 3 个项目 ⌄",
+    "violations": 1,
+    "overflow": false,
+    "snapshot": "- button \"切换项目：全部项目\": |   - strong: 全部项目 |   - text: 3 个项目",
+    "file": "/home/xuke/work/launchpad-dev-1/.local/ev1060/1060-settings-storage-768-base.png",
+    "sha256": "b800a81b16548434"
+  }
+]
