@@ -1,0 +1,474 @@
+/* Token names match the shared console contract; these values apply the #223 visual baseline.
+   Pinned values in the first nine declaration lines must stay exactly as written
+   (see test/ut/static/console-tokens.test.mjs SHARED). Extra tokens in #551 retire leftover
+   hard-coded colours and type sizes in style.css and access.css. */
+:root {
+  --color-bg: #f5f7fb; --color-surface: #fff; --color-surface-alt: #f8fafc;
+  --color-text: #17243b; --color-text-muted: #607087; --color-border: #dce3ed;
+  --color-brand: #245de0; --color-brand-weak: #edf2ff; --color-danger: #ad3039;
+  --space-1: 4px; --space-2: 6px; --space-3: 8px; --space-4: 12px; --space-5: 16px; --space-6: 20px;
+  --radius-1: 4px; --radius-2: 5px; --radius-3: 6px; --radius-card: 12px;
+  --font-size-1: 12px; --font-size-2: 14px; --font-size-3: 17px; --font-size-4: 18px; --font-size-5: 30px;
+  --control-min: 44px; --motion-fast: 180ms; --motion-base: 240ms;
+  --focus-ring: #245de0; --focus-ring-width: 3px; --console-rail: 224px; --console-header: 64px;
+  --console-mobile-height: calc(64px + env(safe-area-inset-bottom));
+  --color-text-inverse: #fff; --color-hover: #f1f5fb; --color-nav: #4b5d75; --color-nav-muted: #a5b0be;
+  --color-warning: #875a0a; --color-warning-bg: #fff2d9; --color-warning-border: #e9c27a;
+  --color-success: #24603d; --color-success-bg: #e5f2e9;
+  --color-danger-bg: #fbeaea; --color-danger-weak: #edc5c8; --color-danger-soft: #fffafa;
+  --color-info: #2c5791; --color-info-bg: #e8f0fb; --color-info-border: #b9cdec;
+  --color-status-neutral: #536c78; --color-status-neutral-bg: #edf1f4;
+  --color-overlay: #16374470; --shadow-card: 0 2px 6px #182d4b03;
+  --shadow-card-hover: 0 3px 10px #182d4b14; --shadow-popover: 0 8px 24px #182d4b26;
+  --font-size-micro: 11px; --font-size-label: 13px; --font-size-row: 15px;
+  --font-size-touch: 16px; --font-size-brand: 22px; --font-size-display: 24px;
+  --font-size-caption: 10px; --font-size-title: 20px; --font-size-hero: 28px;
+  --line-height-tight: 1.35; --line-height-body: 1.5; --line-height-relaxed: 1.65;
+  --space-7: 24px; --space-8: 32px; --space-9: 40px; --space-10: 48px;
+  --radius-control: 7px;
+  --content-max: 1120px;
+}
+.skip-link { position: fixed; top: 8px; left: 12px; z-index: 150; padding: 12px; background: var(--color-surface); color: var(--color-text); transform: translateY(-150%); border-radius: var(--radius-3); }
+.skip-link:focus { transform: none; }
+body { background: var(--color-bg); color: var(--color-text); }
+body > header { position: relative; min-height: var(--console-header); height: auto; padding: 0 24px; gap: 20px; background: var(--color-surface); color: var(--color-text); border-bottom: 1px solid var(--color-border); }
+header .brand { min-width: 180px; }
+header .brand strong { font-size: var(--font-size-brand); letter-spacing: -.5px; }
+header .sub, .current-user-role { color: var(--color-text-muted); }
+header .quiet { color: var(--color-text); border-color: var(--color-border); background: var(--color-surface); min-height: var(--control-min); }
+#header-tools { margin-left: auto; display: flex; align-items: center; gap: 12px; min-width: 0; }
+#identity { margin-left: 0; }
+#console-project-header { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.console-ready #console-project-header .project-head { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; gap: 8px; padding: 0; border: 0; }
+.console-ready #console-project-header .project-head .title-group { flex: 0 1 auto; }
+.console-ready #console-project-header .project-head h1 { font-size: var(--font-size-title); letter-spacing: 0; }
+.console-ready #console-project-header .project-head .actions { flex: none; }
+.console-ready #console-project-header .project-head .btn-secondary { min-height: 36px; padding: 4px 8px; font-size: var(--font-size-1); white-space: nowrap; }
+#console-project-header .workbench-tabs, #console-project-header .console-permission { flex: none; margin: 0; }
+#console-project-header .status { white-space: nowrap; }
+body.console-ready main { margin: 0 0 0 var(--console-rail); padding: var(--space-6) var(--space-8) var(--space-10); min-width: 0; }
+#main-content:focus { outline: none; }
+.console-ready :is(button, .button-link, input:not([type=checkbox]):not([type=radio]), select) { min-height: var(--control-min); }
+.console-ready :is(button, input, select, textarea) { font: inherit; }
+.console-ready :is(button, .button-link):not(.quiet):not(.btn-secondary):not(.btn-text):not(.btn-danger):not(.status) { background-color: var(--color-brand); border-color: var(--color-brand); color: var(--color-text-inverse); }
+.console-ready :is(button, a, input, select, textarea, summary):focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 3px; }
+.console-ready :is(h1, h2, h3, p, label, a, pre) { overflow-wrap: anywhere; }
+.console-ready .muted { line-height: var(--line-height-relaxed); }
+/* #885: a read that failed says so in `.view-error` (views.css #a2292b on #fbeaea, 6.25:1); the muted colour must not
+   pull that line back to #607087 on the error background (4.34:1) just because the node also carries `.muted`. The
+   line-height above still applies to both, so a failed row keeps its box. */
+.console-ready .muted:not(.view-error) { color: var(--color-text-muted); }
+.console-ready :is(.card, .side-card) { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-card); box-shadow: var(--shadow-card); padding: var(--space-6); }
+.console-ready .card.list-panel { padding: 0; }
+/* The board scrolls its columns sideways and opens toolbar menus past the panel edge, so it keeps board.css overflow. */
+.console-ready:not(.board-mode) .card.list-panel { overflow: hidden; }
+.console-ready .toolbar { padding: var(--space-6) var(--space-7); }
+.console-ready #paging { padding: var(--space-4) var(--space-7); }
+.console-ready .toolbar h1 { font-size: var(--font-size-5); letter-spacing: -.7px; }
+/* #558: the title stacks above its count, both on the left edge. */
+.console-ready .title-group { align-items: flex-start; }
+.console-ready #filters { background: var(--color-surface-alt); padding: var(--space-5) var(--space-7); }
+.console-ready .row { padding: var(--space-5) var(--space-7); min-height: 76px; }
+.console-ready .row strong { font-size: var(--font-size-row); }
+.console-ready .row p { font-size: var(--font-size-label); line-height: 1.7; }
+.console-ready .row .actions button { min-height: var(--control-min); }
+.console-ready .status { gap: 5px; white-space: normal; }
+.console-ready .status-warning::before { content: '◷'; }
+.console-ready .status-danger::before { content: '!'; font-weight: 700; }
+.console-ready .status-info::before { content: '•'; }
+#console-sidebar { position: fixed; top: var(--console-header); bottom: 0; left: 0; display: flex; flex-direction: column; width: var(--console-rail); padding: 20px 12px 12px; border-right: 1px solid var(--color-border); background: var(--color-surface); z-index: 4; }
+.console-project-picker { display: grid; flex-shrink: 0; gap: 8px; padding: 0 4px 18px; font-size: var(--font-size-1); color: var(--color-text-muted); }
+.console-scope-trigger { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 10px 8px; text-align: left; background: var(--color-surface); color: var(--color-text); border: 1px solid var(--color-border); border-radius: var(--radius-control); }
+.console-scope-copy { display: grid; gap: 3px; flex: 1; min-width: 0; }
+.console-scope-copy :is(strong,small) { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.console-scope-copy strong { font-size: var(--font-size-2); }
+.console-scope-copy small { font-size: var(--font-size-1); color: var(--color-text-muted); }
+.console-scope-mark { display: grid; place-items: center; flex: 0 0 28px; height: 28px; border-radius: var(--radius-2); background: var(--color-brand-weak); color: var(--color-brand); font-weight: 650; }
+.console-scope-arrow { color: var(--color-text-muted); }
+.console-mobile-scope { display: none; }
+.console-ready dialog.console-scope-picker { position: fixed; inset: calc(var(--console-header) + 96px) auto auto 12px; width: min(380px,calc(100vw - 24px)); max-width: none; height: auto; max-height: calc(100dvh - var(--console-header) - 112px); margin: 0; padding: 0; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-surface); color: var(--color-text); box-shadow: var(--shadow-popover); z-index: 120; overflow: hidden; }
+.console-scope-picker[open] { display: flex; flex-direction: column; }
+body:has(#console-scope-picker:modal) { overflow: hidden; }
+.console-scope-search-row { display: flex; gap: 8px; flex-shrink: 0; padding: 12px; border-bottom: 1px solid var(--color-border); }
+.console-scope-search-row input { width: 100%; min-width: 0; font-size: var(--font-size-touch); }
+.console-scope-close { flex: 0 0 44px; font-size: var(--font-size-title); }
+#console-scope-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 8px; }
+.console-scope-option { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 10px 12px; border-radius: var(--radius-control); cursor: pointer; font-size: var(--font-size-2); }
+.console-scope-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.console-scope-option[aria-selected=true] { background: var(--color-brand-weak); color: var(--color-brand); font-weight: 650; }
+.console-scope-option.is-active { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.console-scope-option:hover { background: var(--color-hover); }
+.console-scope-disabled { color: var(--color-text-muted); white-space: nowrap; font-size: var(--font-size-1); font-weight: 400; }
+.console-scope-group-label { padding: 16px 12px 6px; font-size: var(--font-size-1); color: var(--color-text-muted); }
+.console-scope-empty { padding: 12px; color: var(--color-text-muted); }
+.console-scope-footer { flex-shrink: 0; padding: 8px; border-top: 1px solid var(--color-border); }
+.console-scope-footer .console-link { min-height: 44px; font-size: var(--font-size-2); padding: 10px 12px; }
+@media(max-width:767px) {
+  .console-mobile-scope { display: block; position: sticky; top: 0; z-index: 3; flex: none; margin-bottom: 12px; background: var(--color-bg); }
+  body.console-ready .management-page { top: calc(var(--management-header-height,48px) + var(--console-scope-height,0px) + 8px); }
+  /* Pending confirmations use the conversation's scroller so the sidebar stays in place. */
+  body.console-ready .management-page .management-main:has(.management-command-preview, .management-feed > .console-state-error) { overflow-y: auto; overscroll-behavior: contain; }
+  body.console-ready .management-page .management-main:has(.management-command-preview, .management-feed > .console-state-error) .management-feed-wrap { flex: 1 0 auto; min-height: min(320px,50dvh); }
+  body.console-ready .management-page .management-main:has(.management-command-preview, .management-feed > .console-state-error) .management-feed { flex: none; width: 100%; overflow: visible; }
+  body.console-ready.board-mode .board-filter-controls { max-height: max(100px,calc(38dvh - var(--console-scope-height,0px))); }
+  .console-ready dialog.console-scope-picker { inset: 0; width: 100%; height: 100dvh; max-height: 100dvh; padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); border: 0; border-radius: 0; }
+  .console-scope-search-row input { font-size: 16px; }
+}
+.console-nav-label { font-size: var(--font-size-1); font-weight: 650; color: var(--color-text-muted); margin: 0 12px 6px; letter-spacing: .07em; }
+#console-sidebar #tabs { display: flex; flex: 1; min-height: 0; flex-direction: column; margin: 0; padding: 0; height: auto; overflow: visible; gap: 12px; }
+.console-primary-nav { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.console-settings-nav { flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; padding-top: 8px; border-top: 1px solid var(--color-border); }
+#console-sidebar #tabs button, #console-sidebar .console-link { display: flex; align-items: center; width: 100%; min-height: var(--control-min); height: auto; padding: 10px 14px; border: 0; border-radius: var(--radius-control); color: var(--color-nav); background: transparent; text-align: left; text-decoration: none; font-size: var(--font-size-2); font-weight: 550; }
+#console-sidebar #tabs button:hover, #console-sidebar .console-link:hover { background: var(--color-hover); filter: none; }
+#console-sidebar #tabs :is(button,a)[aria-current=page], #console-secondary-nav .project-nav a[aria-current=page] { background: var(--color-brand-weak); color: var(--color-brand); border: 0; }
+#console-secondary-nav { margin: 0 0 var(--space-5); }
+#console-secondary-nav .project-nav { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-card); padding: 8px 12px; margin: 0; }
+#console-secondary-nav .project-nav .console-nav-label { margin: 0 4px 0 8px; padding: 0; font-size: var(--font-size-1); font-weight: 650; color: var(--color-text-muted); letter-spacing: .04em; }
+#console-secondary-nav .project-nav .console-nav-label:first-child { margin-left: 2px; }
+#console-secondary-nav .project-nav .console-nav-label:not(:first-child) { padding-left: 10px; border-left: 1px solid var(--color-border); }
+#console-secondary-nav .project-nav a { display: inline-flex; align-items: center; min-height: 36px; padding: 6px 12px; font-size: var(--font-size-label); border-radius: var(--radius-control); color: var(--color-nav); white-space: nowrap; }
+#console-secondary-nav .project-nav a:hover { background: var(--color-hover); }
+.console-location { display: flex; align-items: center; gap: var(--space-4); min-height: 32px; margin-bottom: var(--space-5); font-size: var(--font-size-label); color: var(--color-text-muted); }
+.console-location > span:empty { display: none; }
+.console-location > span + span::before { content: '/'; padding-right: 12px; color: var(--color-nav-muted); }
+.console-location > span + span:empty::before { content: none; }
+/* The permission state is a badge, not a breadcrumb: no slash before it, and nothing at all while the project has no gap. */
+.console-location > span.console-permission::before { content: none; }
+.console-location .console-permission:empty { display: none; }
+.console-location .console-permission .status { white-space: normal; }
+.console-ready .project-body { grid-template-columns: minmax(0, 1fr); }
+.console-ready .project-head { padding: var(--space-6) var(--space-7); }
+.console-ready .project-head .title-group { flex-direction: row; flex-wrap: nowrap; align-items: center; }
+.console-ready .project-head .title-group > h1 { flex: 0 1 auto; }
+.console-ready .project-head .title-group > .status { flex: none; }
+.console-ready .project-head h1 { font-size: var(--font-size-5); font-weight: 650; line-height: var(--line-height-tight); letter-spacing: -.02em; }
+.console-ready .project-content { min-width: 0; }
+.console-section-picker, .console-mobile-nav { display: none; }
+/* #558: page title, section title, body and supporting text. */
+/* Scoped to the #558 pages; board columns, the management window and dialog heads keep their own h2 sizes. */
+.console-ready :where(#identity-panel, #costs-panel, .project-content) h2 { font-size: var(--font-size-4); font-weight: 650; line-height: var(--line-height-tight); }
+.cost-note, .cost-incomplete, .cost-scope { max-width: 40em; line-height: var(--line-height-relaxed); }
+.console-page-head { margin: 0 0 var(--space-7); }
+.console-page-head h1 { font-size: var(--font-size-5); font-weight: 650; margin: 8px 0; letter-spacing: -.02em; line-height: var(--line-height-tight); }
+.console-page-head .eyebrow { color: var(--color-brand); font-weight: 650; font-size: var(--font-size-1); }
+.console-page-head .muted { max-width: 40em; font-size: var(--font-size-2); line-height: var(--line-height-relaxed); }
+.console-groups { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-6); align-items: stretch; }
+.console-group { display: flex; flex-direction: column; background: var(--color-surface); padding: var(--space-6); border: 1px solid var(--color-border); border-radius: var(--radius-card); min-width: 0; height: 100%; }
+.console-group-wide { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 var(--space-6); height: auto; }
+.console-group-wide > h2 { grid-column: 1 / -1; }
+.console-group h2 { font-size: var(--font-size-touch); margin: 0 0 var(--space-5); }
+.console-link { display: flex; flex-direction: column; justify-content: center; gap: 4px; color: var(--color-text); text-decoration: none; min-height: 52px; padding: 12px; border-radius: var(--radius-control); }
+.console-link:hover { background: var(--color-brand-weak); color: var(--color-brand); }
+.console-link > span { font-weight: 550; }
+.console-link small { color: var(--color-text-muted); font-size: var(--font-size-1); font-weight: 400; }
+/* #554: linear SVG icons share currentColor and a 24px viewBox. */
+.console-icon { width: 22px; height: 22px; flex-shrink: 0; display: block; }
+.console-nav-icon { width: 22px; height: 22px; line-height: 0; }
+#console-sidebar #tabs button, #console-sidebar .console-link { gap: 10px; }
+.console-link-with-icon { flex-direction: row; justify-content: flex-start; align-items: flex-start; gap: 12px; }
+.console-link-with-icon .console-icon { margin-top: 2px; color: var(--color-brand); }
+.console-link-copy { display: flex; flex-direction: column; justify-content: center; gap: 4px; min-width: 0; }
+.console-link-copy > span { overflow-wrap: anywhere; font-weight: 550; }
+/* Empty / error state: a quiet tray or alert mark, decorative only. It is an inline SVG from consoleIcon():
+   the console CSP (img-src 'self') blocks data: mask images. */
+.console-state-icon { width: 32px; height: 32px; color: var(--color-brand); }
+.console-state-error .console-state-icon { color: var(--color-danger); }
+/* #553: empty, loading and error share one component (consoleState()). */
+.console-state { display: grid; justify-items: center; gap: var(--space-4); padding: var(--space-8) var(--space-6); background: var(--color-surface); text-align: center; border: 1px solid var(--color-border); border-radius: var(--radius-card); box-shadow: var(--shadow-card); }
+.console-state h2 { font-size: var(--font-size-4); margin: 0; font-weight: 650; }
+.console-state p { color: var(--color-text-muted); max-width: 36em; margin: 0; line-height: var(--line-height-relaxed, 1.65); }
+.console-state-loading { border-style: dashed; }
+.console-state-loading::before { content: ''; width: 28px; height: 28px; border: 2px solid var(--color-border); border-top-color: var(--color-brand); border-radius: 50%; animation: console-state-spin .8s linear infinite; }
+@keyframes console-state-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .console-state-loading::before { animation: none; } }
+/* #708: the GitHub permission check that runs after signing in, shown above every page until it ends. */
+.github-verification { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin: 0 0 var(--space-4); padding: var(--space-3) var(--space-4); background: var(--color-surface); color: var(--color-text); border: 1px dashed var(--color-border); border-radius: var(--radius-card); line-height: var(--line-height-tight); overflow-wrap: anywhere; }
+.github-verification::before { content: ''; flex: none; width: 16px; height: 16px; border: 2px solid var(--color-border); border-top-color: var(--color-brand); border-radius: 50%; animation: console-state-spin .8s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .github-verification::before { animation: none; } }
+/* #754: a progress read that keeps failing stops spinning — the line says so and offers a read now. */
+.github-verification[data-state="failed"] { border-style: solid; border-color: var(--color-warning-border); background: var(--color-warning-bg); }
+.github-verification[data-state="failed"]::before { animation: none; border-color: var(--color-warning); }
+/* #754: at 390 a wrapped label needs the room; the retry label itself stays on one line and, once even that does not fit, drops to its own row instead of clipping. */
+.github-verification .btn-secondary { flex: none; margin-left: auto; white-space: nowrap; }
+.console-state-error { border-color: var(--color-danger-weak); background: var(--color-danger-soft); }
+.console-state-error h2 { color: var(--color-danger); }
+.console-state ul { max-width: 36em; margin: 0; padding-left: 1.2em; text-align: left; color: var(--color-text-muted); }
+.console-state ul li { margin: 6px 0; line-height: 1.55; }
+.console-state .console-link { margin: 0 var(--space-3); }
+.console-state [data-testid=console-state-retry] { margin-top: var(--space-2); }
+/* #614: a state with more than one next step (返回项目列表 / 查看身份与权限 / 重试) and folded raw details. */
+.console-state-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-3); margin: 0; }
+.console-state-details { max-width: 36em; color: var(--color-text-muted); font-size: var(--font-size-label); }
+.console-state-details summary { cursor: pointer; }
+.console-state-details code { display: block; margin-top: var(--space-2); overflow-wrap: anywhere; }
+@media (max-width: 480px) { .console-state-actions { align-self: stretch; } .console-state-actions > * { flex: 1 1 100%; justify-content: center; } }
+.members-layout { display: grid; gap: var(--space-5); align-items: start; }
+@media (min-width: 1024px) { .members-layout { grid-template-columns: minmax(0,1fr) minmax(0,1fr); } }
+/* Only super admins see the legacy assignment card; without it the grants card takes the whole row. */
+@media (min-width: 1024px) { .members-layout:has(> [hidden]) > :not([hidden]) { grid-column: 1 / -1; } }
+.console-inbox-filters { display: flex; align-items: end; gap: var(--space-4); margin: 0 0 var(--space-6); }
+.console-inbox-filters label { flex: 1; max-width: 440px; }
+/* Centred under the centred empty-state card; one row even at 390 so both links stay above the mobile bottom bar on short screens. */
+.console-inbox-next { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-4); margin: var(--space-4) 0 0; }
+.console-attention-row { display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: var(--space-6); align-items: center; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-card); padding: var(--space-6) var(--space-7); margin-bottom: var(--space-4); }
+.console-attention-row h2 { font-size: var(--font-size-3); margin: 6px 0; }
+.console-attention-row p { margin: 5px 0; font-size: var(--font-size-label); }
+.console-attention-row .eyebrow { color: #826022; font-size: var(--font-size-1); }
+.console-inbox-paging { display: flex; justify-content: flex-end; gap: 12px; border: 0; }
+body.console-ready.board-mode main { width: calc(100% - var(--console-rail)); padding-bottom: 12px; }
+body.console-ready.board-mode .console-location { flex: none; margin-bottom: 8px; }
+body.console-ready .management-page { left: var(--console-rail); }
+@media (min-width:768px) and (max-width:1439px) {
+  .console-groups { grid-template-columns: repeat(2, minmax(0,1fr)); gap: var(--space-6); align-items: stretch; }
+  body.console-ready main { padding-left: var(--space-6); padding-right: var(--space-6); }
+  /* One row of project section links: scroll sideways instead of wrapping onto a second row. */
+  #console-secondary-nav .project-nav {
+    flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch;
+  }
+  #console-secondary-nav .project-nav a,
+  #console-secondary-nav .project-nav .console-nav-label { flex: 0 0 auto; }
+  /* #707: the project settings categories wrap instead, so at 768 every one of them stays one click away on screen. */
+  #console-secondary-nav .project-nav.project-settings-nav { flex-wrap: wrap; overflow: visible; }
+  .console-group-wide { grid-template-columns: repeat(2, minmax(0,1fr)); }
+}
+@media (max-width:1023px) and (min-width:768px) {
+  :root { --console-rail: 192px; }
+  .console-ready .toolbar { padding: var(--space-5); }
+  .console-ready .toolbar h1 { font-size: 26px; }
+  .console-ready #filters { flex-wrap: wrap; padding: var(--space-4) var(--space-5); }
+  .console-ready #filters label { flex-basis: 40%; }
+  .console-attention-row { gap: var(--space-4); grid-template-columns: minmax(0,1fr) auto; padding: var(--space-5); }
+  .console-attention-row > button { grid-column: 1/-1; justify-self: start; }
+}
+@media (max-width:767px) {
+  :root { --console-header: 64px; }
+  body > header { flex-wrap: nowrap; padding: 8px 12px; gap: 8px; }
+  header .brand { min-width: 0; }
+  header .brand strong { font-size: 20px; }
+  header .sub { display: none; }
+  #identity { gap: 8px; min-width: 0; flex-shrink: 1; }
+  #who { max-width: 11rem; font-size: var(--font-size-1); overflow-wrap: normal; }
+  #who img { width: 24px; height: 24px; }
+  .current-user-role { display: none; }
+  #identity #logout { flex-shrink: 0; padding: 6px 8px; font-size: var(--font-size-1); }
+  #console-sidebar, #console-secondary-nav { display: none; }
+  body.console-ready main { margin: 0; padding: var(--space-4) var(--space-4) calc(var(--console-mobile-height) + var(--space-10)); }
+  .console-ready input:not([type=checkbox]):not([type=radio]), .console-ready select, .console-ready textarea { font-size: var(--font-size-touch) !important; }
+  .console-ready :is(button, .button-link, summary) { min-height: var(--control-min); }
+  .console-ready .row, .console-ready .row.has-actions, .console-ready #rows[data-view] .row.has-actions { padding: var(--space-5); min-width: 0; }
+  .console-ready .toolbar { padding: var(--space-5); align-items: flex-start; }
+  .console-ready .toolbar .actions { flex-wrap: wrap; }
+  .console-ready .toolbar h1 { font-size: 25px; }
+  .console-ready #filters { padding: var(--space-4) var(--space-5); grid-template-columns: minmax(0,1fr); }
+  .console-ready #filters label { min-width: 0; white-space: normal; }
+  .console-ready #filters :is(select,input) { height: auto; }
+  .console-ready .project-head { padding: var(--space-5); }
+  .console-ready .project-head h1 { font-size: var(--font-size-display); }
+  .console-location { flex-wrap: wrap; gap: var(--space-3); margin-bottom: var(--space-4); }
+  .console-section-picker { display: flex; flex-basis: 100%; gap: 6px; font-size: var(--font-size-1); margin-top: 4px; }
+  .console-mobile-nav { position: fixed; z-index: 48; inset: auto 0 0; display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); min-height: var(--console-mobile-height); margin: 0; padding: 4px 4px calc(4px + env(safe-area-inset-bottom)); background: var(--color-surface); border: 0; border-top: 1px solid var(--color-border); box-shadow: 0 -3px 16px #142b4b05; }
+  .console-mobile-nav .console-link { position: relative; align-items: center; text-align: center; gap: 4px; padding: 6px 4px; min-height: 52px; font-size: var(--font-size-1); color: var(--color-text-muted); }
+  .console-mobile-nav .console-link[aria-current=page] { color: var(--color-brand); background: var(--color-brand-weak); }
+  .console-mobile-nav .console-link.console-nav-busy { color: var(--color-brand); }
+  .console-mobile-nav .console-nav-icon { width: 22px; height: 22px; margin: 0 auto; }
+  .console-mobile-nav .console-nav-badge { position: absolute; top: 5px; left: calc(50% + 8px); display: none; width: 8px; height: 8px; border-radius: 50%; background: var(--color-danger); }
+  .console-mobile-nav a[data-active="1"] .console-nav-badge, .console-mobile-nav a[data-unread="1"] .console-nav-badge { display: block; }
+  /* #554: a smaller state mark on phones, so a state's actions stay above the fold. */
+  .console-state-icon { width: 24px; height: 24px; }
+  /* The management feed is a short scroller above the composer: on phones its state is compact and carries no mark,
+     so 重试 stays in view at 390x844 (test/e2e/management/management.spec.mjs). */
+  .management-panel .console-state { padding: var(--space-5) var(--space-4); gap: var(--space-3); }
+  .management-panel .console-state-icon { display: none; }
+  .console-page-head { margin-top: 0; margin-bottom: var(--space-6); }
+  .console-page-head h1 { font-size: var(--font-size-display); }
+  .console-groups { grid-template-columns: minmax(0,1fr); gap: var(--space-5); }
+  .console-group { padding: var(--space-5); }
+  .console-group-wide { grid-template-columns: minmax(0,1fr); }
+  .console-inbox-filters { align-items: end; }
+  .console-inbox-filters label { min-width: 0; }
+  .console-attention-row { grid-template-columns: minmax(0,1fr); padding: 16px; gap: 10px; }
+  .console-attention-row > .status { justify-self: start; }
+  .console-attention-row > button { justify-self: start; }
+  /* #481: a full-screen dialog reserves the bar's height instead of finishing underneath it while the bar is up. */
+  .console-ready dialog { width: 100%; max-width: none; height: 100dvh; max-height: 100dvh; margin: 0; border: 0; border-radius: 0; padding: 16px 16px calc(var(--console-mobile-height) + 16px); }
+  body.console-ready.board-mode main { width: 100%; padding: 8px 10px calc(var(--console-mobile-height) + 12px); }
+  body.console-ready .management-page { left: 0; bottom: var(--console-mobile-height); }
+}
+@media (prefers-reduced-motion:reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
+
+#console-sidebar .console-link { flex-direction: row; justify-content: flex-start; }
+.console-ready #identity .quiet { min-height: var(--control-min); }
+.console-ready #tabs button, .console-link { transition: background-color var(--motion-fast), color var(--motion-fast); }
+
+@media(max-width:767px) { body.console-ready.board-mode .console-location:has(#console-section-label[hidden]) { display: none; } }
+/* #481: the bar keeps its five destinations while a field has focus instead of hiding as it did before, and the page
+   reserves the bar's height through scroll-padding-bottom, so typing never puts the field under it. */
+html { scroll-padding-bottom: calc(var(--console-mobile-height,0px) + 100px); }
+@media(max-width:767px) { .console-ready #paging { padding-right:96px; } }
+
+/* #562: 390 / 768 / 1440 layout sets. The assistant is a normal page on both sidebars and the mobile bar. */
+@media (max-width: 1439px) {
+  .role-nav {
+    flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch;
+    margin-bottom: var(--space-4); padding-bottom: var(--space-2);
+  }
+  .role-nav a { flex: 0 0 auto; white-space: nowrap; }
+}
+
+@media (max-width: 767px) {
+  .roles-page .role-save { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
+  .roles-page .role-save .muted, .roles-page .role-save [role=status], .roles-page .role-save .view-error { flex: 1 1 100%; margin: 0; }
+  .roles-page .role-save button { flex: 0 1 auto; width: auto; max-width: calc(100% - 56px); }
+  .console-ready .project-head { padding: 12px; }
+  /* The header actions take their own row and wrap there, so a fourth action (#707 设置) is never cut off at 390. */
+  .console-ready .project-head .actions { flex: 1 1 100%; min-width: 0; }
+  .console-groups { gap: var(--space-4); }
+  .console-group { padding: 12px; }
+  .console-group .console-link { padding: 8px 10px; min-height: var(--control-min); }
+}
+@media (min-width: 1440px) {
+  .settings-body .project-content, .console-ready .project-content { max-width: none; width: 100%; }
+}
+/* #552: named button and card components. Pages should mark at most one enabled
+   primary action; secondary, danger and text buttons use these classes (quiet /
+   quiet.destructive / linkish remain aliases so existing calls keep working). */
+:is(button, .button-link).btn-primary { background: var(--color-brand); background-color: var(--color-brand); border-color: var(--color-brand); color: var(--color-text-inverse); }
+:is(button, .button-link).btn-secondary,
+:is(button, .button-link).quiet { background: var(--color-surface); background-color: var(--color-surface); border: 1px solid var(--color-border); color: var(--color-text); }
+:is(button, .button-link).btn-danger,
+:is(button, .button-link).quiet.destructive { background: var(--color-surface); background-color: var(--color-surface); border: 1px solid var(--color-danger); color: var(--color-danger); }
+:is(button, .button-link).btn-text { background: transparent; background-color: transparent; border-color: transparent; color: var(--color-brand); box-shadow: none; font-weight: 600; }
+:is(button, .button-link).btn-text:hover { background: var(--color-hover); filter: none; }
+button.linkish { border: 0; background: none; padding: 0; min-height: 0; color: var(--color-brand); text-align: left; font-weight: 600; overflow-wrap: anywhere; }
+.card:not(.list-panel), .side-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-card); box-shadow: var(--shadow-card); padding: var(--space-6); min-width: 0; }
+
+/* #556: technical notes stay closed until the reader opens them. */
+.advanced-help { margin: var(--space-4) 0 0; font-size: var(--font-size-1); color: var(--color-text-muted); max-width: 40em; }
+.advanced-help > summary { cursor: pointer; color: var(--color-text); font-weight: 600; width: fit-content; }
+.advanced-help[open] > summary { margin-bottom: var(--space-3); }
+#access-provider-note:empty { display: none; }
+/* #481: on a phone one account control replaces the inline login, role and sign-out button; wide screens keep the
+   header as it was, so this control exists only below the phone breakpoint. */
+#console-account { display: none; align-items: center; justify-content: center; gap: 6px; min-height: 44px; padding: 6px 10px; }
+.console-account-mark { font-size: 18px; line-height: 1; }
+.console-account-menu { position: absolute; top: calc(100% + 6px); right: 12px; z-index: 60; display: flex; flex-direction: column; gap: 4px; min-width: 200px; max-width: calc(100vw - 24px); padding: 12px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-card); box-shadow: 0 10px 28px #142b4b1f; }
+.console-account-menu[hidden] { display: none; }
+.console-account-menu p { margin: 0; }
+.console-account-login { font-weight: 650; }
+.console-account-role { color: var(--color-text-muted); font-size: 12px; padding-bottom: 4px; border-bottom: 1px solid var(--color-border); }
+.console-account-menu .console-link { min-height: 44px; padding: 10px 8px; }
+.console-account-signout { justify-content: flex-start; min-height: 44px; padding: 10px 8px; text-align: left; }
+@media (max-width:767px) {
+  #identity #who, #identity #logout { display: none; }
+  #console-account { display: inline-flex; }
+}
+/* #555: project / event list filters stay folded until needed, so they do not take the first screen. */
+.console-filters-fold {
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-alt);
+}
+.console-filters-fold[hidden] { display: none; }
+.console-filters-fold > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  min-height: var(--control-min);
+  padding: 10px 24px;
+  font-size: var(--font-size-2);
+  font-weight: 600;
+  color: var(--color-text);
+}
+.console-filters-fold > summary::-webkit-details-marker { display: none; }
+.console-filters-fold > summary::before { content: '▸'; margin-right: 8px; color: var(--color-text-muted); }
+.console-filters-fold[open] > summary::before { content: '▾'; }
+.console-filters-fold #filters { border-top: 1px solid var(--color-border); margin: 0; }
+@media (max-width: 767px) {
+  .console-filters-fold > summary { padding: 10px 16px; }
+}
+
+.locale-switch { display: inline-flex; flex-shrink: 0; border: 1px solid var(--color-border, #cedbe2); border-radius: 7px; overflow: hidden; background: #fff; }
+.locale-switch button, .console-ready .locale-switch button { border: 0; border-radius: 0; background: transparent; color: var(--color-text, #183142); min-height: 36px; padding: 4px 12px; font-size: 12px; font-weight: 550; }
+.locale-switch button + button { border-left: 1px solid var(--color-border, #cedbe2); }
+.locale-switch button[aria-pressed=true], .console-ready .locale-switch button[aria-pressed=true] { background: var(--color-brand-weak, #edf2ff); color: var(--color-brand, #245de0); font-weight: 650; }
+body:not(.console-ready) header .locale-switch { background: #fff; }
+@media (max-width: 700px) {
+  .locale-switch button { min-height: 32px; padding: 4px 8px; }
+}
+/* The language toggle plus account tools do not fit beside the brand below ~480px; wrap them
+   onto a second header row and keep --console-header in step with the taller bar. */
+@media (max-width: 480px) {
+  body.console-ready { --console-header: 108px; }
+  body.console-ready > header { flex-wrap: wrap; row-gap: 4px; }
+  body.console-ready #header-tools { flex: 1 1 100%; width: 100%; justify-content: flex-end; margin-left: 0; }
+}
+@media (max-width: 1100px) {
+  body.console-ready:has(#console-project-header:not([hidden])) { --console-header: 112px; }
+  body.console-ready:has(#console-project-header:not([hidden])) > header { flex-wrap: wrap; row-gap: 8px; padding-block: 8px; }
+  body.console-ready > header #console-project-header { order: 3; flex-basis: 100%; }
+  body.console-ready:has(#console-project-header:not([hidden])) > header .brand { min-width: 0; }
+  body.console-ready:has(#console-project-header:not([hidden])) > header .brand .sub { display: none; }
+}
+@media (max-width: 767px) {
+  body.console-ready:has(#console-project-header:not([hidden])) { --console-header: 156px; }
+  body.console-ready > header #console-project-header { gap: 8px; }
+  .console-ready #console-project-header .project-head { flex-basis: 100%; }
+  .console-ready #console-project-header .project-head .actions { flex: none; }
+  body.console-ready:has(#console-project-header:not([hidden])) #console-location > :is(#console-area, #console-context) { display: none; }
+}
+@media (min-width: 380px) and (max-width: 480px) {
+  body.console-ready:has(#console-project-header:not([hidden])) #header-tools { flex: 0 0 auto; width: auto; margin-left: auto; }
+}
+@media (max-width: 360px) {
+  body.console-ready:has(#console-project-header:not([hidden])) { --console-header: 204px; }
+}
+@media (min-width: 380px) and (max-width: 767px) and (max-height: 560px) {
+  body.console-ready:has(#console-project-header:not([hidden])) { --console-header: 112px; }
+  .console-ready #console-project-header .project-head { flex: 1 1 0; }
+  body.console-ready:has(#console-project-header:not([hidden])) #header-tools { flex: 0 0 auto; width: auto; margin-left: auto; }
+}
+/* #642: 找不到这个页面 — one primary way back, full-width buttons on a phone. */
+.page-not-found-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 16px 0 0; }
+@media (max-width: 480px) { .page-not-found-actions > * { flex: 1 1 100%; justify-content: center; } }
+
+/* #561 long titles, repo names, list subtitles and identity notes truncate instead of colliding with actions.
+   The #569 required-role reason stays whole: it explains why the switch is locked. */
+#who { overflow-wrap: normal; }
+.current-user-name, .current-user-role { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-title, .console-ready .row strong, .console-ready .project-head h1,
+.console-ready .toolbar h1, .console-page-head h1, .console-group h2 {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 100%;
+}
+.console-link-title, .board-card-repo {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 100%;
+}
+.console-ready .toolbar .muted, .console-ready #count, .console-ready .row-content > p,
+.roles-page .project-table td .muted:not(.role-enable-reason), .roles-page .project-table td p:not(.role-enable-reason) {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden; overflow-wrap: anywhere;
+}
+/* #544 already turns the project list into labelled cells below 1280px. On a phone, put
+   设置 directly under the name and ahead of the status cells (the #561 390 criterion). */
+@media (max-width: 599px) {
+  :is(#rows[data-view=projects], .global-project-table) .project-list-row > .project-cell[data-label="项目"] { grid-row: 1; }
+  :is(#rows[data-view=projects], .global-project-table) .project-list-row > .project-cell[data-label="操作"] {
+    grid-row: 2; grid-column: 1 / -1; justify-content: flex-start;
+  }
+}
+@media (max-width: 767px) {
+  .identity-layout .muted, .identity-overview .muted, .identity-layout p.muted {
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4;
+    overflow: hidden;
+  }
+  .identity-layout form, .identity-layout .actions, .identity-layout button {
+    position: relative; z-index: 1; margin-top: var(--space-3);
+  }
+}
+
+/* #715: one banner for an expired session, above whatever page is open; the header names the state instead of a role. */
+.session-expired-banner { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap;
+  margin: 0 0 var(--space-3); padding: 10px 14px; border: 1px solid var(--color-warning-border); border-radius: var(--radius-3);
+  background: var(--color-warning-bg); color: var(--color-text); font-weight: 600; }
+.session-expired-banner > span { min-width: 0; overflow-wrap: anywhere; }
+.session-expired .current-user-role, .session-expired .console-account-role { color: var(--color-warning); }
+@media (max-width: 480px) { .session-expired-banner > button { flex: 1 1 100%; } }

@@ -1,0 +1,366 @@
+import { modelCatalogStorage } from '../models/catalog.js';
+import { sharedModelStorage } from '../models/sharing.js';
+import {childTaskStorage} from '../tasks/children.js';
+import {longExecutionStorage} from '../roles/long-execution.js';
+import {priorityStorage} from '../tasks/priority.js';
+import {coordinationStorage} from '../tasks/coordination.js';
+import { integrationStorage } from '../tasks/integration.js';
+import { roleStorage } from '../roles/storage.js';
+import { memoryStorage } from '../memory/project.js';
+import { traceStorage } from '../tasks/trace.js';
+import { taskStorage } from '../tasks/storage.js';
+import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import { chmodSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { Trajectories, trajectoryStorage } from './trajectories.js';
+import { DiskGuard } from './disk.js';
+import { SecretBox, randomId } from '../core/security.js';
+import { externalStorage } from '../external/storage.js';
+import { boardStorage } from '../board/storage.js';
+import { metricsStorage } from '../metrics/storage.js';
+import { rateLimitStorage } from '../github/rate-limits.js';
+import { actionsStorage } from '../actions/storage.js';
+import { workStorage } from '../work/settings.js';
+import { migrateWorkflows } from '../work/migration.js';
+import { ceilingStorage } from '../work/ceiling.js';
+import { retireWorkTypes } from '../work/retired.js';
+import { grantStorage } from '../tasks/grants.js';
+import { basisStorage } from '../dispatch/basis.js';
+import { progressStorage } from '../review/progress.js';
+import { dispatchStorage } from '../dispatch/store.js';
+import { githubWriteStorage } from '../github/write.js';
+import { installationStorage } from '../installations/storage.js';
+import { identityStorage } from '../identity/storage.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { managementStorage } from '../management/storage.js';
+import { channelStorage } from '../channels/storage.js';
+import { scheduleStorage } from '../schedules/storage.js';
+import { trustedOrganizationStorage } from '../app/trusted-organizations.js';
+import { taskManagementStorage } from '../tasks/management.js';
+import { conversationStorage } from '../roles/conversation-storage.js';
+import { serviceRoleStorage } from '../service-roles/roles.js';
+import { serviceBindingStorage } from '../channels/service-bindings.js';
+import { workspaceStorage } from '../projects/workspace-cleanup.js';
+import { worktreeStorage } from '../projects/worktrees.js';
+
+export type Row = Record<string, any>;
+export interface StoreOptions { slowSqlMs?: number; log?: (line: string) => void; now?: () => number }
+// WAL files keep the largest size they ever reached; after a checkpoint resets the log, SQLite truncates it to this.
+// The manager's ledger uses the same limit (manager/projects.mjs).
+export const walSizeLimit = 512 * 1024 * 1024;
+/** SQL shape without parameter or literal values, for slow-statement logs. */
+export function sqlFingerprint(sql: string): string {
+  const normalized = sql
+    .replace(/--[^\r\n]*|\/\*[\s\S]*?(?:\*\/|$)|[xX]'(?:''|[^'])*'?|'(?:''|[^'])*'?|"(?:""|[^"])*"?|\b(?:0[xX][0-9a-fA-F]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b/g,
+      token => (token.startsWith('--') || token.startsWith('/*') ? ' ' : '?'))
+    .replace(/\s+/g, ' ')
+    .replace(/(?:\?\s*,\s*){2,}\?/g, '?,?...')
+    .trim();
+  return normalized.length > 240 ? normalized.slice(0, 240) + '...' : normalized;
+}
+export class Store {
+  readonly db: DatabaseSync;
+  readonly secrets: SecretBox;
+  /** Database file path, or ':memory:'. Evidence directories live beside a file store. */
+  readonly path: string;
+  // Bodies of agent work (model requests, tool calls, large logs) in per-run JSONL files next to the database.
+  readonly trajectories: Trajectories;
+  // Free space of the disk the database is on (#671); null for an in-memory store.
+  readonly disk: DiskGuard | null;
+  private readonly authorizationGuard = new AsyncLocalStorage<() => void>();
+  private transactionDepth = 0;
+  private transactionStatements = 0;
+  private transactionSlowReported = false;
+  constructor(path: string, key: Buffer, private readonly options: StoreOptions = {}) {
+    this.path = path;
+    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    this.db = new DatabaseSync(path);
+    const empty = !this.db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' LIMIT 1").get();
+    if (path !== ':memory:') chmodSync(path, 0o600);
+    this.secrets = new SecretBox(key);
+    this.trajectories = new Trajectories(this.db, path === ':memory:' ? null : join(dirname(path), 'trajectories'));
+    // One place turns a post-commit cleanup failure into an audit row, whether the files belonged to a project or a
+    // conversation, and whether the removal came from a deletion, a retention sweep or a retried reclaim (#771).
+    this.trajectories.onCleanupFailure = (where, error) => {
+      const repository = where.repository_id ?? null, resource = where.repository_id ?? where.conversation_id ?? '';
+      this.audit('system', repository ? 'repository.evidence_removal_failed' : 'channel.history_cleanup_failed', resource, repository);
+      console.error('[cleanup] files of ' + resource + ' left behind:', error);
+    };
+    this.disk = path === ':memory:' ? null : new DiskGuard(dirname(path));
+    this.db.exec(`PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000; PRAGMA journal_size_limit=${walSizeLimit};`);
+    // A new schema needs one durable commit, not a disk sync for each CREATE/ALTER. Existing upgrades can toggle
+    // foreign_keys while rebuilding tables, so retain their individual transaction boundaries.
+    if (empty) {
+      try { this.transaction(() => this.initialize()); }
+      catch (error) { this.trajectories.dispose(); this.db.close(); throw error; }
+    } else this.initialize();
+    this.trajectories.results.migrateLegacy();
+    this.trajectories.results.sweep();
+  }
+  private initialize(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+        password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('super_admin','project_admin')), active INTEGER NOT NULL DEFAULT 1);
+      CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), csrf TEXT NOT NULL, expires_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL CHECK(type IN ('github_app','bot_account')),
+        app_id TEXT, credentials TEXT NOT NULL, created_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS endpoints(id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(id), secret TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS repositories(id TEXT PRIMARY KEY, full_name TEXT NOT NULL COLLATE NOCASE UNIQUE, owner_id TEXT NOT NULL,
+        account_id TEXT NOT NULL REFERENCES accounts(id));
+      CREATE TABLE IF NOT EXISTS project_admin_assignments(user_id TEXT NOT NULL REFERENCES users(id), repository_id TEXT NOT NULL,
+        PRIMARY KEY(user_id,repository_id));
+      CREATE TABLE IF NOT EXISTS models(id TEXT PRIMARY KEY, repository_id TEXT REFERENCES repositories(id), api_url TEXT NOT NULL, model_name TEXT NOT NULL,
+        api_key TEXT, version INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS model_projects(model_id TEXT NOT NULL REFERENCES models(id), repository_id TEXT NOT NULL REFERENCES repositories(id),
+        PRIMARY KEY(model_id,repository_id));
+      CREATE TABLE IF NOT EXISTS policies(repository_id TEXT PRIMARY KEY REFERENCES repositories(id), model_id TEXT REFERENCES models(id),
+        review_enabled INTEGER NOT NULL DEFAULT 0, development_enabled INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS deliveries(id TEXT PRIMARY KEY, account_id TEXT, endpoint_id TEXT, repository_id TEXT REFERENCES repositories(id),
+        delivery_id TEXT NOT NULL, event TEXT NOT NULL, route TEXT NOT NULL, status TEXT NOT NULL, duplicate INTEGER NOT NULL,
+        received_at TEXT NOT NULL, http_status INTEGER NOT NULL, request_headers TEXT NOT NULL, payload BLOB NOT NULL,
+        body_complete INTEGER NOT NULL, response TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS delivery_repo_time ON deliveries(repository_id,received_at);
+      -- The console lists the latest deliveries; without this the list sorted every archived payload (30k rows, ~700 MB).
+      CREATE INDEX IF NOT EXISTS delivery_time ON deliveries(received_at,id);
+      -- Refused deliveries are pruned by status and age on every rejection; without this the prune scans every accepted row.
+      CREATE INDEX IF NOT EXISTS delivery_status_time ON deliveries(status,received_at);
+      CREATE TABLE IF NOT EXISTS processed_deliveries(account_id TEXT NOT NULL, endpoint_id TEXT NOT NULL, delivery_id TEXT NOT NULL,
+        PRIMARY KEY(account_id,endpoint_id,delivery_id));
+      CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY, repository_id TEXT NOT NULL REFERENCES repositories(id), kind TEXT NOT NULL, status TEXT NOT NULL, summary TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS task_logs(id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), content TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS audit(id TEXT PRIMARY KEY, user_id TEXT NOT NULL, repository_id TEXT,
+        action TEXT NOT NULL, resource_id TEXT NOT NULL, created_at TEXT NOT NULL);
+      PRAGMA user_version=1;
+    `);
+    // The audit outlives the users and repositories it names: deleting either must neither fail on nor remove its records.
+    if (this.all('PRAGMA foreign_key_list(audit)').length) this.transaction(() => this.db.exec(`
+      CREATE TABLE audit_records(id TEXT PRIMARY KEY, user_id TEXT NOT NULL, repository_id TEXT, action TEXT NOT NULL, resource_id TEXT NOT NULL, created_at TEXT NOT NULL);
+      INSERT INTO audit_records SELECT id,user_id,repository_id,action,resource_id,created_at FROM audit;
+      DROP TABLE audit; ALTER TABLE audit_records RENAME TO audit;`));
+    // A repository grant may name an installed repository before it is enabled (the project keeps the installation's id),
+    // so grants no longer reference repositories; older databases drop that foreign key once.
+    if (this.all('PRAGMA foreign_key_list(project_admin_assignments)').some(row => row.table === 'repositories')) this.transaction(() => this.db.exec(`
+      CREATE TABLE project_admin_grants(user_id TEXT NOT NULL REFERENCES users(id), repository_id TEXT NOT NULL, PRIMARY KEY(user_id,repository_id));
+      INSERT INTO project_admin_grants SELECT user_id,repository_id FROM project_admin_assignments;
+      DROP TABLE project_admin_assignments; ALTER TABLE project_admin_grants RENAME TO project_admin_assignments;`));
+    // A whole organization granted to a project administrator: every project with this owner_id, including ones enabled later.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS project_admin_organizations(user_id TEXT NOT NULL REFERENCES users(id), owner_id TEXT NOT NULL,
+      PRIMARY KEY(user_id,owner_id));`);
+    if (!this.all('PRAGMA table_info(policies)').some(row => row.name === 'enabled')) this.db.exec('ALTER TABLE policies ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1');
+    this.db.exec(`CREATE TABLE IF NOT EXISTS project_environments(repository_id TEXT PRIMARY KEY REFERENCES repositories(id),
+      generation INTEGER NOT NULL DEFAULT 1,state TEXT NOT NULL DEFAULT 'provisioning',desired TEXT NOT NULL DEFAULT 'ready',error TEXT,started_at TEXT);
+      CREATE TABLE IF NOT EXISTS environment_operations(id TEXT PRIMARY KEY,repository_id TEXT NOT NULL REFERENCES repositories(id),
+      action TEXT NOT NULL,input TEXT NOT NULL,state TEXT NOT NULL,result TEXT);
+      PRAGMA user_version=2;`);
+    if (!this.all('PRAGMA table_info(project_environments)').some(row => row.name === 'revision')) this.db.exec('ALTER TABLE project_environments ADD COLUMN revision INTEGER NOT NULL DEFAULT 0');
+    const extend = (table: string, columns: Record<string, string>) => {
+      const names = this.all(`PRAGMA table_info(${table})`).map(row => row.name);
+      for (const [name, type] of Object.entries(columns)) if (!names.includes(name)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+    };
+    extend('policies', { test_command: "TEXT NOT NULL DEFAULT ''", base_branch:"TEXT NOT NULL DEFAULT ''", max_revisions: 'INTEGER NOT NULL DEFAULT 3', review_label: "TEXT NOT NULL DEFAULT ''",
+      automation: "TEXT NOT NULL DEFAULT '{}'" });
+    extend('tasks', { unique_key: 'TEXT', input: "TEXT NOT NULL DEFAULT '{}'", result: 'TEXT', phase: "TEXT NOT NULL DEFAULT 'prepare'",
+      object_number: 'INTEGER', head_sha: 'TEXT', source_task_id: 'TEXT', source_delivery_id: 'TEXT', generation: 'INTEGER',
+      workspace_id: 'TEXT', messages: 'TEXT', claim_token: 'TEXT', error_code: 'TEXT', attempt: 'INTEGER NOT NULL DEFAULT 1',
+      next_run_at: 'INTEGER NOT NULL DEFAULT 0',retry_count:'INTEGER NOT NULL DEFAULT 0',retry_error_code:'TEXT',retry_cycle_started_at:'INTEGER',
+      created_at: "TEXT NOT NULL DEFAULT ''", updated_at: "TEXT NOT NULL DEFAULT ''" });
+    // A running task holds its own claim; a repository may hold several, up to its concurrency. The earlier
+    // one-row-per-repository lock table is replaced (claims never survive a restart, so nothing is migrated).
+    // The tasks a delivery created (deliveryResult, for every row of the console's event list), read from this index
+    // alone: a tasks row stores the task input (about 1 MB on average in production) before these columns, so without it
+    // each event row scanned every task through its input's overflow pages, ~1 s per row and ~55 s per page.
+    this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS task_unique_key ON tasks(unique_key);
+      CREATE INDEX IF NOT EXISTS task_source_delivery ON tasks(source_delivery_id,created_at,id,kind,object_number,status);
+      DROP TABLE IF EXISTS task_locks;
+      CREATE TABLE IF NOT EXISTS task_claims(task_id TEXT PRIMARY KEY REFERENCES tasks(id),repository_id TEXT NOT NULL,token TEXT NOT NULL,claimed_at TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS task_claims_repository ON task_claims(repository_id);
+      CREATE TABLE IF NOT EXISTS task_tools(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),request TEXT NOT NULL,result TEXT,state TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS github_effects(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),kind TEXT NOT NULL,request TEXT NOT NULL,
+        state TEXT NOT NULL,response TEXT,marker TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS development_candidates(task_id TEXT PRIMARY KEY REFERENCES tasks(id),data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS bot_branches(repository_id TEXT NOT NULL,branch TEXT NOT NULL,task_id TEXT NOT NULL,PRIMARY KEY(repository_id,branch));
+      -- The GitHub account each configured account acts as (#1104), as the client last identified it; webhooks use it to recognize pull requests the bot opened.
+      CREATE TABLE IF NOT EXISTS github_actors(account_id TEXT PRIMARY KEY,actor_id TEXT NOT NULL,login TEXT NOT NULL,updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS bot_pull_requests(repository_id TEXT NOT NULL,number INTEGER NOT NULL,pr_id TEXT NOT NULL,author_id TEXT NOT NULL,
+        head_repository_id TEXT NOT NULL,branch TEXT NOT NULL,sha TEXT NOT NULL,source_task_id TEXT NOT NULL,revisions INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(repository_id,number));
+      -- Requests on a bot pull request that a review took on: done once a revision was queued for them (each comment only once,
+      -- another review bot only once per pull request), pending while another revision was running, for the next review.
+      CREATE TABLE IF NOT EXISTS bot_pr_requests(repository_id TEXT NOT NULL,number INTEGER NOT NULL,source_type TEXT NOT NULL,source_id TEXT NOT NULL,
+        author TEXT NOT NULL,author_id TEXT NOT NULL,author_type TEXT NOT NULL,url TEXT NOT NULL,state TEXT NOT NULL,task_id TEXT,created_at TEXT NOT NULL,
+        PRIMARY KEY(repository_id,number,source_type,source_id));
+      CREATE TABLE IF NOT EXISTS automation_runs(id TEXT PRIMARY KEY,repository_id TEXT NOT NULL REFERENCES repositories(id),
+        delivery_id TEXT,event TEXT NOT NULL,route TEXT NOT NULL,dry_run INTEGER NOT NULL,actions TEXT NOT NULL,notes TEXT NOT NULL,created_at TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS automation_repo_time ON automation_runs(repository_id,created_at);
+      PRAGMA user_version=4;`);
+    extend('task_logs', { created_at: "TEXT NOT NULL DEFAULT ''" });
+    // A task's logs are read by task: on each phase start, snapshot and fault a running task writes, in restart recovery,
+    // the console's log pages, and per row of the task lists (the fault detail). Without this index every such read
+    // scanned the whole table (1.04M rows in production, ~0.35 s each, about a tenth of the control plane's thread).
+    // Building it reads task_logs once at the next start (~0.5 GB in production, a few seconds).
+    this.db.exec('CREATE INDEX IF NOT EXISTS task_logs_task ON task_logs(task_id)');
+    this.db.exec(`CREATE INDEX IF NOT EXISTS github_effects_task_kind ON github_effects(task_id,kind);
+      CREATE INDEX IF NOT EXISTS bot_pull_requests_source_task ON bot_pull_requests(source_task_id);`);
+    // Review rules: which events start a review, the comment language and the administrator's project-specific guidance.
+    extend('policies', { review_issues: 'INTEGER NOT NULL DEFAULT 1', review_pull_requests: 'INTEGER NOT NULL DEFAULT 1', review_pr_updates: 'INTEGER NOT NULL DEFAULT 1',
+      review_issue_updates: 'INTEGER NOT NULL DEFAULT 1', review_pr_discussion: 'INTEGER NOT NULL DEFAULT 1',
+      review_language: "TEXT NOT NULL DEFAULT 'auto'", review_instructions: "TEXT NOT NULL DEFAULT ''", rule_overrides: "TEXT NOT NULL DEFAULT '{}'" });
+    // How many tasks the project computer runs at once; NULL follows the global default in settings.
+    extend('policies', { task_concurrency: 'INTEGER', task_models: "TEXT NOT NULL DEFAULT '{}'" });
+    // Per-role concurrency limits (#228): {"<role_id>": 1..32 | null}. An empty object means no role limit is set.
+    extend('policies', { role_concurrency: "TEXT NOT NULL DEFAULT '{}'" });
+    // Repositories each account can see on GitHub. Seeing a repository does not register or enable it.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS installed_repositories(account_id TEXT NOT NULL REFERENCES accounts(id),repository_id TEXT NOT NULL,
+        installation_id TEXT,full_name TEXT NOT NULL,owner_id TEXT NOT NULL,owner_login TEXT NOT NULL DEFAULT '',private INTEGER NOT NULL DEFAULT 0,
+        installed INTEGER NOT NULL DEFAULT 1,synced_at TEXT NOT NULL,PRIMARY KEY(account_id,repository_id));
+      CREATE TABLE IF NOT EXISTS installation_syncs(account_id TEXT PRIMARY KEY REFERENCES accounts(id),synced_at TEXT,error TEXT,repositories INTEGER);`);
+    // What GitHub granted on the repository as last read: the installation's permissions for an App, the account's role
+    // flags for a bot account. NULL until a sync or permission check has read it.
+    extend('installed_repositories', { permissions: 'TEXT', events: 'TEXT', permissions_at: 'TEXT', hidden: 'INTEGER NOT NULL DEFAULT 0' });
+    installationStorage(this);
+    // Public exports are independent of review/development activation. Private publication requires local consent.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS public_board_consents(account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      repository_id TEXT NOT NULL,PRIMARY KEY(account_id,repository_id));
+      CREATE TABLE IF NOT EXISTS public_board_jobs(account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,repository_id TEXT NOT NULL,
+      generation INTEGER NOT NULL DEFAULT 1,collected_generation INTEGER NOT NULL DEFAULT 0,active_path TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,next_attempt INTEGER NOT NULL DEFAULT 0,last_error TEXT,PRIMARY KEY(account_id,repository_id));`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS public_board_settings(repository_id TEXT PRIMARY KEY,
+      enabled INTEGER NOT NULL CHECK(enabled IN (0,1)));
+      INSERT OR IGNORE INTO public_board_settings(repository_id,enabled)
+        SELECT DISTINCT repository_id,1 FROM public_board_consents;`);
+    // Gate/dashboard connection status per repository.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS repo_integrations(repository_id TEXT PRIMARY KEY,
+        gate_state TEXT NOT NULL DEFAULT 'unknown',gate_detail TEXT NOT NULL DEFAULT '',
+        dashboard_state TEXT NOT NULL DEFAULT 'unknown',dashboard_detail TEXT NOT NULL DEFAULT '',checked_at TEXT NOT NULL);
+      PRAGMA user_version=5;`);
+    // wait_count: how many times in a row the task stopped for the same reason, so each automatic wait lasts longer.
+    extend('tasks', { wait_count: 'INTEGER NOT NULL DEFAULT 0' });
+    // rate_limit_bucket: the GitHub window (github_rate_limits.bucket) that refused the task's last request, while it waits.
+    extend('tasks', { rate_limit_bucket: 'TEXT' });
+    extend('tasks', { review_update_cursor: 'INTEGER NOT NULL DEFAULT 0', model_started: 'INTEGER NOT NULL DEFAULT 0', publication_started: 'INTEGER NOT NULL DEFAULT 0' });
+    this.db.exec(`CREATE TABLE IF NOT EXISTS review_updates(id INTEGER PRIMARY KEY AUTOINCREMENT,task_id TEXT NOT NULL REFERENCES tasks(id),event_key TEXT NOT NULL UNIQUE,data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS review_updates_task ON review_updates(task_id,id);
+      CREATE TABLE IF NOT EXISTS review_objects(repository_id TEXT NOT NULL REFERENCES repositories(id),kind TEXT NOT NULL,object_number INTEGER NOT NULL,closed_at INTEGER,
+        PRIMARY KEY(repository_id,kind,object_number));
+      -- Copies of review conversations before Pi kept its own session files (#1040); nothing reads them any more.
+      DROP TABLE IF EXISTS review_sessions;`);
+    // The bot's summary comment on an Issue or PR, which every later review of it edits instead of adding another comment.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS review_summaries(repository_id TEXT NOT NULL REFERENCES repositories(id),object_number INTEGER NOT NULL,
+      comment_id TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(repository_id,object_number))`);
+    actionsStorage(this);
+    rateLimitStorage(this);
+    externalStorage(this);
+    boardStorage(this);
+    metricsStorage(this);
+    modelCatalogStorage(this);
+    // Shared models serve every project unless restricted (#850).
+    sharedModelStorage(this);
+    // Ref columns on task_tools, model_requests and task_logs; the trace triggers below record them.
+    trajectoryStorage(this.db);
+    workStorage(this);
+    dispatchStorage(this);
+    githubWriteStorage(this);
+    taskStorage(this);
+    priorityStorage(this);
+    // Reopening workers replace trace triggers too; DROP and CREATE must be one writer transaction.
+    this.transaction(() => traceStorage(this));
+    memoryStorage(this);
+    integrationStorage(this);
+    coordinationStorage(this);
+    childTaskStorage(this);
+    longExecutionStorage(this);
+    roleStorage(this);
+    // Task origin inheritance must remain available while another worker reopens this database.
+    this.transaction(() => taskManagementStorage(this));
+    // Writes granted to generic tasks and the project's delivery gates (#814).
+    grantStorage(this);
+    // Why a development was allowed to start (#815).
+    basisStorage(this);
+    // What an Issue development shows on the Issue: its developing label and status comment (#1047).
+    progressStorage(this);
+    identityStorage(this);
+    managementStorage(this);
+    channelStorage(this);
+    conversationStorage(this);
+    serviceRoleStorage(this);
+    // Group bindings reference service roles and migrate legacy group employees once (#312).
+    serviceBindingStorage(this);
+    scheduleStorage(this);
+    // GitHub owners whose repository administrators start their own repositories (#848).
+    trustedOrganizationStorage(this);
+    // Which task uses which workspace on the project computers, for their scheduled removal (#444).
+    workspaceStorage(this);
+    // The computers' shared git worktrees and which task held each when (#769).
+    worktreeStorage(this);
+    // Workflows became the Manager and project configuration (#207); an upgraded database moves them once.
+    migrateWorkflows(this);
+    // One capability ceiling per project (#850), derived once from the switches and writes it replaces.
+    ceilingStorage(this);
+    // Removed work types (gate onboarding, #931): what older versions saved for them.
+    retireWorkTypes(this);
+  }
+  private get now() { return this.options.now ?? (() => performance.now()); }
+  private logSlow(ms: number, op: string, detail: string | (() => string)) {
+    if (ms < (this.options.slowSqlMs ?? 100)) return false;
+    const text = typeof detail === 'function' ? detail() : detail;
+    (this.options.log ?? console.warn)(`[slow-sql] ${Math.round(ms)} ms ${op} ${text}`);
+    return true;
+  }
+  private measure<T>(op: 'get' | 'all' | 'run', sql: string, fn: () => T): T {
+    if (this.transactionDepth) this.transactionStatements++;
+    const started = this.now();
+    try { return fn(); }
+    finally {
+      if (this.logSlow(this.now() - started, op, () => sqlFingerprint(sql)) && this.transactionDepth) this.transactionSlowReported = true;
+    }
+  }
+  get(sql: string, ...args: SQLInputValue[]): Row | undefined { return this.measure('get', sql, () => this.db.prepare(sql).get(...args)); }
+  all(sql: string, ...args: SQLInputValue[]): Row[] { return this.measure('all', sql, () => this.db.prepare(sql).all(...args)); }
+  run(sql: string, ...args: SQLInputValue[]) {
+    if (!this.transactionDepth) this.authorizationGuard.getStore()?.();
+    return this.measure('run', sql, () => this.db.prepare(sql).run(...args));
+  }
+  withAuthorizationGuard<T>(guard: () => void, fn: () => T): T { return this.authorizationGuard.run(guard, fn); }
+  checkAuthorization(): void { this.authorizationGuard.getStore()?.(); }
+  transaction<T>(fn: () => T): T {
+    if (this.transactionDepth) {
+      const savepoint = 'nested_' + randomId(); this.db.exec('SAVEPOINT ' + savepoint);
+      try { const result = fn(); this.db.exec('RELEASE ' + savepoint); return result; }
+      catch (error) { this.db.exec('ROLLBACK TO ' + savepoint); this.db.exec('RELEASE ' + savepoint); throw error; }
+    }
+    this.authorizationGuard.getStore()?.();
+    const txStarted = this.now();
+    this.db.exec('BEGIN IMMEDIATE');
+    let reported = this.logSlow(this.now() - txStarted, 'begin', 'BEGIN IMMEDIATE');
+    this.transactionDepth = 1;
+    this.transactionStatements = 0;
+    this.transactionSlowReported = false;
+    let commitMs = 0, committed = false;
+    try {
+      const result = fn();
+      const commitStarted = this.now();
+      this.db.exec('COMMIT');
+      commitMs = this.now() - commitStarted;
+      committed = true;
+      if (this.logSlow(commitMs, 'commit', 'COMMIT')) reported = true;
+      return result;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    } finally {
+      const statements = this.transactionStatements, childReported = this.transactionSlowReported;
+      this.transactionDepth = 0;
+      this.transactionStatements = 0;
+      this.transactionSlowReported = false;
+      const totalMs = this.now() - txStarted;
+      if (!reported && !childReported) this.logSlow(totalMs, 'transaction', () => `(${statements ? `${statements} statements, ` : ''}${committed ? `commit ${Math.round(commitMs)} ms` : 'rolled back'})`);
+    }
+  }
+  // Some tables belong to services that create them on construction; deletions skip the ones this process has not made.
+  hasTable(name: string): boolean { return !!this.get("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", name); }
+  audit(user: string, action: string, resource: string, repo: string | null = null): void {
+    this.run('INSERT INTO audit VALUES(?,?,?,?,?,?)', randomId(), user, repo, action, resource, new Date().toISOString());
+  }
+  close(): void { this.trajectories.dispose(); this.db.close(); }
+}

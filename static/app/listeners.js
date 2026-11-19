@@ -1,0 +1,73 @@
+$('editor-form').addEventListener('submit', async event => {
+  event.preventDefault(); const form = event.currentTarget, data = Object.fromEntries(new FormData(form));
+  if (editorKind === 'accounts') { if (data.type === 'github_app') delete data.token; else { delete data.private_key; delete data.app_id; } }
+  if (editorKind === 'users') { delete data.grants; if (data.role !== 'super_admin') Object.assign(data, chosenGrants(form)); }
+  const submit = form.querySelector('[type=submit]'); submit.disabled = true;
+  try { if (editingUser) await api('/api/project-admin-assignments', 'PUT', { user_id: editingUser.id, ...chosenGrants(form) }); else await api('/api/' + editorKind, 'POST', data); $('editor').close(); form.reset(); await start(); } catch (err) { error(err); } finally { submit.disabled = false; }
+});
+$('cancel').addEventListener('click', () => { $('editor').close(); $('editor-form').reset(); });
+$('close-detail').addEventListener('click', () => $('detail').close());
+$('boot-retry').addEventListener('click', async () => {
+  const retry = $('boot-retry'), message = $('boot-message');
+  retry.disabled = true; retry.hidden = true;
+  message.textContent = t('chrome.boot'); message.setAttribute('role', 'status'); message.classList.remove('view-error');
+  try { await start(); } catch (err) { error(err); } finally { retry.disabled = false; }
+});
+let accessPending = false;
+$('access-password-toggle').addEventListener('click', () => {
+  const password = $('access-password'), shown = password.type === 'password'; password.type = shown ? 'text' : 'password';
+  $('access-password-toggle').textContent = shown ? t('login.hide_password') : t('login.show_password'); $('access-password-toggle').setAttribute('aria-pressed', String(shown));
+});
+$('github-login').addEventListener('click', event => { if (accessPending) event.preventDefault(); });
+$('access-provider-retry').addEventListener('click', async () => {
+  $('access-provider-retry').disabled = true; try { await start(); } catch (err) { error(err); } finally { $('access-provider-retry').disabled = false; }
+});
+$('access-form').addEventListener('submit', async event => {
+  event.preventDefault(); if (accessPending) return;
+  const form = event.currentTarget, data = Object.fromEntries(new FormData(form)), submit = $('access-submit'), initializing = setup;
+  const controls = [...form.elements].map(control => [control, control.disabled]);
+  accessPending = true; controls.forEach(([control]) => { control.disabled = true; }); form.setAttribute('aria-busy', 'true');
+  submit.textContent = initializing ? t('setup.submitting') : t('login.submitting'); $('github-login').setAttribute('aria-disabled', 'true'); notice('message');
+  try {
+    await api(initializing ? '/api/setup' : '/api/auth/login', 'POST', data);
+    form.reset(); const url = new URL(location.href); url.searchParams.delete('auth_error'); history.replaceState(null, '', url);
+    try { await start(); } catch (err) { showBootFailure(err); }
+  } catch (err) {
+    const text = /invalid_login/.test(err.message) ? t('login.invalid') : /login_rate_limited/.test(err.message) ? t('login.rate_limited') : /already_initialized/.test(err.message) ? t('login.already_initialized') : err instanceof TypeError ? t('login.network') : readErrorText(err);
+    if (/already_initialized/.test(err.message)) await start().catch(error);
+    notice('message', text, '', 'alert');
+  } finally {
+    accessPending = false; controls.forEach(([control, disabled]) => { control.disabled = disabled; }); form.removeAttribute('aria-busy');
+    submit.textContent = setup ? t('setup.submit') : t('login.submit'); $('github-login').removeAttribute('aria-disabled');
+  }
+});
+// Signing out ends the session through the one shared cleanup (session.js), then redraws the sign-in screen.
+$('logout').addEventListener('click', async () => {
+  if (typeof confirmKnowledgeLeave === 'function' && !await confirmKnowledgeLeave(true)) return;
+  try { await api('/api/auth/logout', 'POST', {}); endSession(); await start(); } catch (err) { error(err); } });
+// The address is written without waiting for hashchange, so the page switches in the same click; back and forward still
+// fire hashchange and draw the page they return to.
+// Leave confirmation applies to the actual link address, including project settings and work pages.
+$('tabs').addEventListener('click', async event => {
+  const item = event.target.closest?.('[data-console-nav], [data-tab]'); if (!item) return;
+  if (event.button || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  const name = item.dataset.consoleNav || item.dataset.tab;
+  if (name === 'management') { void openManagementPage(consoleScope()).catch(error); return; }
+  if (typeof confirmKnowledgeLeave === 'function' && !await confirmKnowledgeLeave()) return;
+  const address = item.getAttribute('href') || (['projects', ...projectConsolePages].includes(name) ? consolePageAddress(name) : tabAddresses[name]);
+  if (location.hash !== address) history.pushState(null, '', address); offset = 0; route().catch(error);
+});
+$('refresh').addEventListener('click', () => start().catch(error));
+// The onboarding dialog calls this once a run reaches a terminal state.
+window.refreshIntegrations = () => api('/api/integrations/check', 'POST', {}).then(() => start()).catch(() => {});
+$('sync').addEventListener('click', async () => {
+  $('sync').disabled = true; notice('message', '正在从 GitHub 同步安装列表…');
+  try { const result = await api('/api/installations/sync', 'POST', {}); if (typeof forgetConsoleGaps === 'function') forgetConsoleGaps(); await start(); const conclusion = installationSyncNotice(result); notice('message', conclusion.text, conclusion.tone); }
+  catch (err) { notice('message', '安装列表同步失败：' + readErrorText(err) + '，还不能判断全部正常。', '', 'alert'); } finally { $('sync').disabled = false; }
+});
+$('filters').addEventListener('submit', event => { event.preventDefault(); offset = 0; render().catch(error); });
+$('hidden-filter').addEventListener('change', () => { offset = 0; render().catch(error); });
+for (const [id, delta] of [['previous', -50], ['next', 50]]) $(id).addEventListener('click', () => { offset += delta; render().catch(error); });
+document.addEventListener('DOMContentLoaded',()=>start().catch(error),{once:true});
+setInterval(()=>{if(me&&tab==='projects'&&!$('hidden-filter').checked&&!projectRoute()&&!document.querySelector('dialog[open]')&&projectActivityDue())refreshProjectActivity();},5000);

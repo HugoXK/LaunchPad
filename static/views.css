@@ -1,0 +1,1030 @@
+/* Task process and project computer views (static/views.js). */
+dialog.wide{width:min(1200px,calc(100vw - 24px));height:calc(100svh - 24px);max-height:none;padding:0;overflow:hidden}
+dialog.wide[open]{display:flex;flex-direction:column}
+.view-head{display:flex;justify-content:space-between;align-items:center;gap:10px 16px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid #e3eaf0}
+.view-head h2{font-size:var(--font-size-3)}.view-head .title-group{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}
+.view-error{margin:0;padding:8px 16px;color:#a2292b;background:#fbeaea}.view-error:empty{display:none}
+.view-warning{margin:0;padding:8px 16px;color:#7a4a00;background:#fff4e0}.view-warning:empty{display:none}
+.button-link{display:inline-flex;align-items:center;min-height:var(--control-min);padding:6px 12px;border:1px solid var(--color-border);border-radius:var(--radius-2);color:var(--color-text);background:var(--color-surface);font-weight:600;text-decoration:none;white-space:nowrap}
+.task-layout{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,380px)}
+.task-picker{flex:1;min-height:0;overflow:auto;padding:16px}.task-picker>.muted{margin:0 0 12px}.task-choice-list{display:grid;gap:8px;max-width:900px;margin-bottom:12px}
+.task-choice-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px 14px;padding:10px 12px;border:1px solid #dce6eb;border-radius:7px;background:#f7fafb}
+.task-choice-open{justify-self:start;text-align:left;white-space:normal;height:auto;overflow-wrap:anywhere}.task-choice-row .task-metrics{grid-column:1/-1;margin:0}
+.timeline-panel{min-height:0;overflow:auto;padding:14px 18px 20px}.timeline-panel h3,.side-card h3{font-size:var(--font-size-2);margin:0 0 10px;color:var(--color-text)}
+/* #1039: a card title can be an h2; the element name never sets the size, the same tokens and weight do. The
+   console-wide h2 rule (shell.css) is more specific than the UA h2 defaults, so restate the h3 values here. */
+.side-card>h2{font-size:var(--font-size-2);margin:0 0 10px;color:var(--color-text)}
+.console-ready .side-card>h2{font-size:var(--font-size-2);font-weight:700;line-height:normal}
+.task-log-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0}.task-log-controls>p{flex-basis:100%;margin:0}.task-log-controls button{min-height:44px}
+.timeline-panel>.muted{font-size:var(--font-size-label);line-height:1.6}
+.task-side{min-height:0;overflow:auto;padding:14px;background:#f7fafb;border-left:1px solid #e3eaf0;display:flex;flex-direction:column;gap:12px}
+.timeline{list-style:none;margin:0;padding:0 0 0 18px;border-left:2px solid #dbe5ea;display:flex;flex-direction:column;gap:10px}
+.timeline:empty{border-left:0;padding:0}.timeline:empty::after{content:"还没有公开工作日志。任务开始后，公开输出和工具结果会出现在这里。";color:var(--color-text-muted);font-size:var(--font-size-label)}
+.step{position:relative;min-width:0;background:#fff;border:1px solid #e3eaf0;border-radius:6px;padding:9px 12px}
+.step::before{content:"";position:absolute;left:-26px;top:13px;width:10px;height:10px;border-radius:50%;background:#9fb6c1;box-shadow:0 0 0 3px #fff}
+.step-model::before{background:#2c5791}.step-tool::before,.step-command::before{background:var(--color-brand)}.step-published::before,.step-completed::before{background:#24603d}.step-fault::before,.step-runtime_fault::before{background:#a02b31}
+.step-waiting::before{background:#b37b1a}
+.task-side .facts dd{white-space:pre-wrap;overflow-wrap:anywhere}
+.step-head{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}.step-head strong{font-size:var(--font-size-label)}
+.step-meta{display:flex;align-items:center;gap:6px;color:var(--color-text-muted);font-size:var(--font-size-1)}.step p{margin:5px 0 0;font-size:var(--font-size-label);overflow-wrap:anywhere}.say{white-space:pre-wrap}.fault-action{color:#24414f}
+pre.command{margin:7px 0 0;padding:7px 10px;border-radius:5px;background:var(--color-text);color:var(--color-text-inverse);max-height:none}
+pre.output{margin:6px 0 0;padding:7px 10px;border-radius:5px;background:#f5f8fa;border:1px solid #e3eaf0;max-height:340px}
+.fold{margin-top:6px;font-size:var(--font-size-1);color:var(--color-text-muted)}.fold summary{cursor:pointer;width:fit-content}
+.snapshot-progress>summary{cursor:pointer;overflow-wrap:anywhere;font-size:var(--font-size-label)}.snapshot-progress>summary:focus-visible{outline:2px solid var(--color-brand);outline-offset:4px;border-radius:3px}
+.snapshot-heading{display:inline-flex;align-items:center;flex-wrap:wrap;gap:6px 10px;width:calc(100% - 20px);vertical-align:top}.snapshot-heading>time{margin-left:auto;color:var(--color-text-muted);font-size:var(--font-size-1)}
+.snapshot-latest{display:block;margin:5px 0 0 20px;color:var(--color-text-muted);font-size:var(--font-size-1);line-height:1.6}
+pre.output.snapshot-output{margin-top:10px;max-height:340px;background:var(--color-text);color:var(--color-text-inverse);border-color:var(--color-text);overscroll-behavior:contain}
+.calls{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}.call{display:inline-block;max-width:100%;padding:2px 8px;border-radius:4px;background:#e8f0fb;color:#2c5791;font-size:var(--font-size-1);overflow-wrap:anywhere}
+a.call-link{background:#e5f2e9;color:#24603d}
+.live{display:flex;align-items:center;gap:8px;margin:12px 0 0;color:#2c5791;font-size:var(--font-size-label)}.live::before{content:"";flex-shrink:0;width:8px;height:8px;border-radius:50%;background:#2c5791;animation:live-pulse 1.2s ease-in-out infinite}
+@keyframes live-pulse{50%{opacity:.25}}@media(prefers-reduced-motion:reduce){.live::before{animation:none}}
+.side-card{background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-card);padding:var(--space-6);box-shadow:var(--shadow-card);min-width:0}.side-card p{margin:6px 0 0;font-size:var(--font-size-label)}.side-card .actions{margin-top:8px}
+.facts{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;margin:8px 0 0;font-size:var(--font-size-1)}.facts dt{color:var(--color-text-muted);white-space:nowrap}.facts dd{margin:0;overflow-wrap:anywhere}
+.findings{margin:8px 0 0;padding-left:18px;font-size:var(--font-size-label)}.findings li+li{margin-top:10px}
+.history{list-style:none;margin:0;padding:0}.history li{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:3px 10px;padding:7px 0;border-bottom:1px solid #edf1f4;font-size:var(--font-size-label)}
+.history li:last-child{border-bottom:0}.history.wrap li{overflow-wrap:anywhere}.history .wide-cell{grid-column:1/-1}.history code{overflow-wrap:anywhere;font-size:var(--font-size-1)}
+button.linkish{border:0;background:none;padding:0;min-height:0;color:var(--color-brand);text-align:left;font-weight:600;overflow-wrap:anywhere}
+.environment-layout{flex:1;min-height:0;overflow:auto;padding:14px 16px;display:grid;grid-template-columns:minmax(280px,380px) minmax(0,1fr);gap:12px;align-items:start;background:#f7fafb}
+.stack{display:flex;flex-direction:column;gap:12px;min-width:0}
+.raw summary{font-weight:600}
+@media(max-width:860px){
+  dialog.wide{width:calc(100vw - 12px);height:calc(100svh - 12px)}
+  .task-layout{display:block;overflow:auto}.timeline-panel,.task-side{overflow:visible}.task-side{border-left:0;border-top:1px solid #e3eaf0}
+  .environment-layout{grid-template-columns:minmax(0,1fr)}.view-head{padding:10px 12px}.timeline-panel{padding:12px}
+}
+#activation-view{width:min(560px,calc(100vw - 24px))}#activation-view label.check input{flex:none}.trusted-organization-add{margin-top:var(--space-5)}.trusted-organization-add h4{margin:0 0 var(--space-2)}#activation-view h2{font-size:var(--font-size-3)}#activation-view p{margin:0;font-size:var(--font-size-label)}
+label.check{flex-direction:row;align-items:flex-start;gap:8px;font-size:var(--font-size-label);line-height:1.5}label.check input{width:auto;margin-top:3px}
+.hidden-filter{flex-direction:row;align-items:center;gap:6px;font-size:var(--font-size-1);color:var(--color-text-muted);white-space:nowrap}.hidden-filter input{width:auto;margin:0}
+.step-running{margin:10px 0 0 18px;border-color:#b9cdea}.live-output{max-height:420px}
+/* Project rows use the responsive feature layout below, without the older max-content columns. */
+@media(min-width:761px){.row>.actions{flex-wrap:nowrap}}
+.field-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 12px}.settings-actions{justify-content:flex-end}
+@media(max-width:560px){.field-grid{grid-template-columns:minmax(0,1fr)}}
+
+/* Project page (static/project.js): categories on the left, one category's settings on the right. */
+.project-page{background:#fff;border:1px solid #dde6eb;border-radius:7px;overflow:hidden}
+.project-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;padding:12px 16px;border-bottom:1px solid #e3eaf0}
+/* #707: the project name keeps 16rem; when the header actions do not fit beside it they wrap below instead of squeezing it. */
+.project-head .title-group{flex:1 1 16rem;min-width:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap}.project-head h1{font-size:19px;margin:0;overflow-wrap:anywhere}
+.back-link{flex-basis:100%;font-size:var(--font-size-1);color:var(--color-brand);text-decoration:none}.back-link:hover{text-decoration:underline}
+.project-body{display:grid;grid-template-columns:minmax(0,1fr);min-height:calc(100svh - 200px)}
+.project-nav{display:flex;flex-direction:column;gap:2px;padding:12px 8px;border-right:1px solid #e3eaf0;background:#f7fafb}
+.project-nav a{padding:8px 12px;border-radius:5px;color:var(--color-text-muted);text-decoration:none;font-weight:600;font-size:var(--font-size-2)}
+.project-nav a:hover{background:#edf3f5}.project-nav a[aria-current=page]{background:var(--color-brand);color:var(--color-text-inverse)}
+.project-content{padding:var(--space-6);display:flex;flex-direction:column;gap:var(--space-6);min-width:0;max-width:none;width:100%}.project-content>.side-card,.project-content>.card{margin:0}
+.project-content .side-card h3{font-size:var(--font-size-row)}.project-content h4{margin:6px 0 0;font-size:var(--font-size-label);color:var(--color-text)}
+.project-form{gap:10px}.project-form fieldset{border:0;padding:0;margin:0;display:flex;flex-direction:column;gap:10px;min-width:0}
+.project-form fieldset:disabled input,.project-form fieldset:disabled textarea,.project-form fieldset:disabled select{background:#f7fafb;color:var(--color-text-muted)}
+.project-form textarea{min-height:0;font-size:var(--font-size-label)}.project-form textarea.code{font:var(--font-size-1)/1.5 ui-monospace,monospace}.project-form p{margin:0}
+/* One section per GitHub settings page, with its input beside the instructions. */
+.github-login-instructions{min-width:0}.login-guide{margin:0;padding-left:24px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.login-guide>li{padding:12px;background:#f7fafb;border:1px solid #dde6eb;border-radius:6px;min-width:0;overflow-wrap:anywhere}
+.login-guide>li>*{display:block;margin-top:8px}.login-guide>li>strong{margin-top:0;font-size:var(--font-size-2)}.login-guide>li>label{display:flex}
+.github-login-callback{padding:8px;background:#edf2f5;white-space:normal;overflow-wrap:anywhere;word-break:break-word;min-width:0}
+.login-addresses{min-width:0}.login-addresses code{overflow-wrap:anywhere;word-break:break-word}
+.release-panel>label,.release-panel>details,.release-record>label,.release-record>details{margin-top:10px}.release-history{display:grid;gap:12px;margin-top:10px}.release-panel .release-jobs{display:grid;gap:8px;margin-top:10px}.release-job{padding:8px 10px;border:1px solid #e3eaf0;border-radius:5px}.release-job p{margin:0 0 4px}.release-panel summary{cursor:pointer;color:var(--color-brand);font-size:var(--font-size-label)}.release-record textarea{font:var(--font-size-label)/1.5 ui-monospace,monospace;min-height:240px}.release-record .actions a{font-size:var(--font-size-label)}.release-panel>.view-error:empty{display:none}.release-panel .release-check-failed{color:#a2292b;font-weight:600}
+.form-actions{justify-content:flex-start}.view-success{margin:0;color:#24603d}.flash{padding:8px 12px;border-radius:5px;background:#e5f2e9}.view-progress{margin:0;color:#2c5791}.view-success:empty,.view-progress:empty{display:none}
+.status-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-6);align-items:stretch}.status-grid>.side-card{min-width:0;height:100%;display:flex;flex-direction:column}
+#activity-status{grid-template-columns:repeat(2,minmax(0,1fr))}
+#activity-status .activity-history{grid-column:1/-1}
+.choices{display:flex;flex-direction:column;gap:6px}.choice{flex-direction:row;align-items:center;gap:10px;padding:8px 10px;border:1px solid #e3eaf0;border-radius:6px;font-size:var(--font-size-label);color:var(--color-text);flex-wrap:wrap}
+.choice input{width:auto}.choice:has(input:checked){border-color:var(--color-brand);background:#eef6f6}
+.task-toolbar{margin:12px 0}
+.project-table{width:100%;border-collapse:collapse;font-size:var(--font-size-label);table-layout:fixed}
+.project-table th{text-align:left;color:var(--color-text-muted);font-size:var(--font-size-1);padding:10px 8px;border-bottom:1px solid #d7e3e8}
+.project-table td{padding:12px 8px;border-bottom:1px solid #edf1f4;vertical-align:middle;overflow-wrap:anywhere}
+.project-table tr:last-child td{border-bottom:0}.project-table td>code{display:block;margin-top:4px;font-size:var(--font-size-1);color:var(--color-text-muted)}
+
+.project-table[aria-label="任务模型"] th:first-child{width:24%}.project-table button{white-space:nowrap}
+.task-model-editor{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;align-items:end;min-width:0}
+.task-model-editor>.muted{grid-column:1/-1;margin:0;font-size:var(--font-size-1)}.task-model-editor>label{min-width:0}.task-model-editor select{width:100%;min-width:0}
+.task-model-editor>.view-error{grid-column:1/-1;margin:0}.task-model-editor>.view-error:empty{display:none}.task-model-editor>.actions{margin:0;justify-content:flex-end;align-self:end}
+.common-rules{border:1px solid #e3eaf0;border-radius:6px;padding:12px;margin-top:12px}.common-rules>h4{margin:0 0 8px}
+.common-rule{border-top:1px solid #edf1f4;padding:9px 0}.common-rule:last-child{padding-bottom:0}.common-rule summary{cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:var(--font-size-label)}.common-rule summary::before{content:'▸';color:var(--color-text-muted)}.common-rule[open] summary::before{content:'▾'}.common-rule summary>.muted{margin-left:auto;font-size:var(--font-size-1)}.common-rule-body:empty{display:none}.common-rule-body>.side-card{margin-top:10px}
+.rule-sync{display:flex;align-items:center;gap:8px 16px;flex-wrap:wrap}.rule-sync>.muted{flex:1;min-width:0;margin:0;font-size:var(--font-size-1)}.rule-sync>[role=status]{flex-basis:100%;margin:0}.rule-sync>[role=status]:empty{display:none}
+.project-inline-detail{border-top:1px solid #d7e3e8;padding-top:16px;margin-top:16px;min-width:0}.project-inline-detail>.heading{margin-bottom:12px}.project-inline-detail>.heading h3{margin:0}.project-inline-detail>.side-card{margin:0}.project-inline-detail>.flash{margin-bottom:12px}
+.other-rule-rows{border-top:2px solid #d7e3e8}
+@media(max-width:650px){.project-table th,.project-table td{padding:10px 4px}.project-table button{padding:6px;min-height:36px;font-size:var(--font-size-1)}.task-model-editor{grid-template-columns:minmax(0,1fr)}.task-model-editor>.actions{grid-column:1;justify-content:flex-start}.task-model-editor select{font-size:var(--font-size-label)}.project-table[aria-label="工作流模型"] th:first-child{width:28%}
+.common-rule summary>.muted{margin-left:0}.rule-sync{align-items:flex-start}.rule-sync>.muted{flex-basis:100%}}
+.add-model{margin-top:8px}.add-model>summary{font-weight:600;color:var(--color-brand)}.add-model .side-card{border:0;padding:8px 0 0}
+.member-add{margin-top:8px}.member-add select{width:auto;min-width:220px}
+@media(max-width:760px){
+  .project-body{grid-template-columns:minmax(0,1fr);min-height:0}
+  .project-nav{flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid #e3eaf0;padding:8px}.project-nav a{white-space:nowrap;padding:6px 10px}
+  .project-content{padding:12px}.status-grid,#activity-status{grid-template-columns:minmax(0,1fr)}
+  .project-head .title-group{flex-basis:100%;flex-direction:row;align-items:center}.project-head h1{font-size:var(--font-size-3);flex-basis:100%}
+}
+
+/* Navigation stays fully named and reachable on phones; rules use the page scroll. */
+.model-list,.choice,.choice .muted{min-width:0;overflow-wrap:anywhere}
+.rule-layers pre.output{max-height:none;overflow:visible}
+@media(max-width:760px){
+  #tabs,.project-nav,.wizard-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));overflow:visible;gap:4px}
+  #tabs button,.project-nav a,.wizard-steps button{white-space:normal;text-align:center;padding:8px 4px;min-width:0;line-height:1.35;overflow-wrap:anywhere}
+  .choice .muted{flex-basis:100%}
+}
+
+.model-address{display:block;min-width:0;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
+/* Model forms and saved models: resolved addresses, the missing-/v1 warning and upstream list/test outcomes. */
+.endpoint-preview,.probe-result{display:flex;flex-direction:column;gap:4px;min-width:0;font-size:var(--font-size-1)}.endpoint-preview:empty,.probe-result:empty{display:none}
+.endpoint-preview .facts,.probe-result .facts{margin:0}.probe-result .view-error{padding:6px 10px}.probe-result .fold{margin-top:0}
+.endpoint-warning{margin:0;padding:6px 10px;border-radius:5px;background:#fff2d9;color:#875a0a;font-size:var(--font-size-1);line-height:1.5}
+.model-address .status{vertical-align:1px}
+/* Saved models grouped by provider (static/project.js providerList), and the one-click list for adding more of them. */
+.provider-list{display:flex;flex-direction:column;gap:10px;min-width:0}
+.provider-group{border:1px solid #e3eaf0;border-radius:6px;padding:8px 12px;min-width:0}
+.provider-head{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;padding-bottom:6px;border-bottom:1px solid #edf1f4}
+.provider-title,.choice-group{min-width:0;overflow-wrap:anywhere;font-size:var(--font-size-label)}.provider-title{flex:1 1 260px}.provider-title .muted{font-size:var(--font-size-1)}
+.provider-count{font-size:var(--font-size-1)}.provider-head>button{margin-left:auto}
+.choice-group{margin:8px 0 0;color:var(--color-text-muted)}.choice-group:first-of-type{margin-top:4px}
+.provider-add{display:flex;flex-direction:column;gap:8px;padding:10px 0;border-bottom:1px solid #edf1f4;min-width:0}
+.provider-add input[type=search]{max-width:320px}.provider-add .actions input{flex:1 1 200px;min-width:0}
+.model-chips{display:flex;flex-wrap:wrap;gap:6px;max-height:240px;overflow:auto}.model-chips:empty{display:none}
+.model-chip{font-size:var(--font-size-1);padding:4px 10px;overflow-wrap:anywhere;text-align:left}.model-chip:disabled{color:#24603d;background:#e5f2e9;border-color:#cfe5d6;opacity:1}
+@media(max-width:760px){.history .model-entry{grid-template-columns:minmax(0,1fr)}.model-entry>.actions{grid-column:1;justify-content:flex-start;flex-wrap:wrap}}
+
+/* Rule files (static/project.js): the overview table and one card per file. */
+.rule-table-wrap{min-width:0;overflow-x:auto}
+/* GitHub request windows (static/settings.js rateLimitBody): a small bar of the window's share already used. */
+.rate-meter{display:inline-block;width:56px;height:6px;border-radius:3px;background:#e3eaf0;vertical-align:middle;overflow:hidden}.rate-meter>span{display:block;height:100%;background:var(--color-brand)}.rate-meter>span.low{background:#b3261e}
+.rate-table td:last-child{white-space:normal}
+.rule-table{width:100%;border-collapse:collapse;font-size:var(--font-size-label)}
+.rule-table th{text-align:left;font-size:var(--font-size-1);font-weight:600;color:var(--color-text-muted);padding:6px 8px;border-bottom:1px solid #dde6eb;white-space:nowrap}
+.rule-table td{padding:8px;border-bottom:1px solid #edf1f4;vertical-align:middle;overflow-wrap:anywhere}
+.rule-table tr:last-child td{border-bottom:0}
+.rule-table td code{font-size:var(--font-size-1);overflow-wrap:anywhere}
+.rule-table td:last-child{text-align:right;white-space:nowrap}
+/* The user table (#547): the first column carries the account name and its access lines, the last up to three controls. */
+.users-table td:first-child{min-width:200px}.users-table .user-project-access{margin:4px 0;padding-left:16px}
+.users-table td:last-child{white-space:normal}.users-table .actions{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
+.rule-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:0 0 4px}.rule-meta code{font-size:var(--font-size-1);overflow-wrap:anywhere}
+.rule-card .fold{margin-top:8px}.rule-card pre.output{max-height:none;overflow:visible}.rule-card>.muted{margin:8px 0 0}.rule-card>.actions{margin-top:8px}.rule-card .flash{margin-top:6px}
+.rule-editor{margin-top:8px}
+@media(max-width:760px){
+  /* Each file becomes a small card: label on the left, value on the right. */
+  .rule-table thead{display:none}.rule-table,.rule-table tbody,.rule-table tr,.rule-table td{display:block}
+  .rule-table tr{padding:8px 0;border-bottom:1px solid #e3eaf0}.rule-table tr:last-child{border-bottom:0}
+  .rule-table td{display:grid;grid-template-columns:84px minmax(0,1fr);gap:8px;align-items:center;padding:3px 0;border:0}
+  .rule-table td::before{content:attr(data-label);color:var(--color-text-muted);font-size:var(--font-size-1)}
+  .rule-table td:last-child{text-align:left}.rule-table td:last-child::before{content:''}
+  .rule-table td>.status,.rule-table td>button{justify-self:start}
+}
+
+.project-owner-group,.project-owner-rows{min-width:0}.project-owner-group+.project-owner-group{border-top:1px solid #dde6eb}
+.project-owner-bar{display:flex;align-items:center;gap:10px;padding:6px 14px;background:#f3f7f9;border-bottom:1px solid #e3eaf0}
+.project-owner-title{margin:0;padding:0;font-size:var(--font-size-2);font-weight:600;overflow-wrap:anywhere;min-width:0}
+/* #544: the organization title is the fold control; the caret follows aria-expanded and stays out of the heading text. */
+.project-owner-toggle{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:2px 4px;font:inherit;text-align:left;border-radius:4px}
+.project-owner-toggle::before{content:'▾';color:currentColor;font-size:11px;line-height:1}
+.project-owner-toggle[aria-expanded=false]::before{content:'▸'}
+.project-owner-count{font-size:12px;white-space:nowrap;margin-left:auto}
+.project-owner-group.is-folded .project-owner-rows{display:none}
+@media(max-width:760px){.project-owner-bar{padding:6px 12px}}
+
+/* The project row keeps feature status, direct switches and task counts together on the right. */
+/* #544: one shared column definition for the whole list, so the same category sits at the same x in every row and in
+   every organization. The header owns the labels; the rows only carry the values. */
+:is(#rows[data-view=projects], .global-project-table){--project-columns:minmax(120px,1.6fr) 58px 50px 50px 78px 66px 62px 92px 68px}
+/* Wide desktop only: the same columns with more room, still one shared definition for the whole list. */
+@media(min-width:1280px){:is(#rows[data-view=projects], .global-project-table){--project-columns:minmax(180px,1.7fr) 76px 64px 64px 104px 96px 92px 120px 84px}}
+.global-project-table{min-width:0;border:1px solid var(--color-border);border-radius:var(--radius-2);overflow:visible}
+#settings-panel .global-project-table:not(.is-hidden){--project-columns:minmax(144px,2fr) 58px 50px 50px 78px 66px 76px 100px minmax(120px,.7fr)}
+#settings-panel .global-project-table.is-hidden{--project-columns:minmax(240px,1fr) minmax(100px,auto)}
+@media(min-width:1440px){#settings-panel .global-project-table:not(.is-hidden){--project-columns:minmax(204px,2.2fr) 76px 64px 64px 104px 96px 92px 120px minmax(120px,.6fr)}}
+.global-project-table .project-list-row{position:relative;padding:8px 14px;min-height:48px}
+.global-project-table .project-list-row:nth-child(even){background:var(--color-surface-alt)}
+.global-project-table .project-list-row:last-child{border-bottom:0}
+.global-project-table .project-control-feedback{flex-basis:100%;text-align:left}
+.global-project-table .project-cell[data-label="项目"]>p{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.global-project-table .project-cell[data-label="项目"]>a>small{display:none}
+@media(min-width:1280px){
+  #settings-panel .global-project-table:not(.is-hidden) .project-list-row{min-height:84px}
+  .global-project-table .project-cell:not([data-label="项目"]){flex-wrap:nowrap}
+  /* #978 review: the 看板 cell also carries the row's board switch (static/views/project-list.js:64, a 96px pill), and the
+     nowrap above squeezed the chip into a one-character-per-line column while the switch parked on top of it and
+     covered three characters. This one cell wraps instead: the chip takes the whole column on its first line and the
+     switch sits below, so neither paints over the other. */
+  .global-project-table .project-cell[data-label="看板"]{flex-wrap:wrap}
+  .global-project-table .project-cell[data-label="操作"]>.actions{flex-wrap:nowrap}
+  /* #978: this table's columns are narrower than the state sentences (门禁 66–96px, 看板 next to its switch), so the
+     base .status nowrap let the shared ellipsis cut「发布检查未完成」to「发布检…」. Chips wrap to another line and the
+     row grows with them; #/projects keeps its own nowrap because that list lays these chips in .project-features. */
+  .global-project-table .project-cell .status{white-space:normal}
+}
+.project-actions-menu{position:static;display:inline-flex;min-width:0}
+.project-actions-toggle{list-style:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:36px;padding:5px 10px;border:1px solid var(--color-border);border-radius:var(--radius-2);background:var(--color-surface);color:var(--color-text);cursor:pointer;font-size:var(--font-size-1);user-select:none}
+.project-actions-toggle::before{content:'⋯';font-size:16px;line-height:1}
+.project-actions-toggle::-webkit-details-marker{display:none}
+.project-actions-panel{position:absolute;right:0;top:calc(100% + 6px);z-index:60;min-width:168px;padding:6px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-2);box-shadow:0 10px 30px #182d4b14}
+.project-actions-panel>.actions{display:flex;flex-direction:column;gap:6px}
+.project-actions-panel button{width:100%;justify-content:center;white-space:nowrap}
+@media(max-width:760px){.project-actions-toggle{min-height:44px}}
+:is(#rows[data-view=projects], .global-project-table) .project-table-head,:is(#rows[data-view=projects], .global-project-table) .project-list-row{display:grid;grid-template-columns:var(--project-columns);gap:6px 12px;align-items:center}
+:is(#rows[data-view=projects], .global-project-table) .project-table-head{padding:6px 14px;border-bottom:1px solid #dde6eb;background:#fbfdfe;font-size:12px;color:var(--color-text-muted)}
+:is(#rows[data-view=projects], .global-project-table) .project-list-row{padding:6px 14px;min-height:44px;border-bottom:1px solid #e8eef2}
+:is(#rows[data-view=projects], .global-project-table) .project-list-row:hover{background:#fafcfd}
+.project-cell{min-width:0;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+/* The name gets the first line to itself, so a medium-length repo such as fixture/project-101 is
+   not squeezed by the 项目总览 link and its 12-character note. The compact link and its note sit
+   under the name; the note may ellipsis, with the full text in title. The detail line stays last. */
+:is(#rows[data-view=projects], .global-project-table) .project-list-row>.project-cell[data-label="项目"]{display:grid;grid-template-columns:minmax(0,1fr);align-items:baseline}
+:is(#rows[data-view=projects], .global-project-table) .project-list-row>.project-cell[data-label="项目"]>strong{grid-column:1;grid-row:1;min-width:0}
+:is(#rows[data-view=projects], .global-project-table) .project-list-row>.project-cell[data-label="项目"]>a{grid-column:1;grid-row:2;display:flex;flex-direction:row;flex-wrap:nowrap;align-items:baseline;gap:6px;min-height:0;padding:0;min-width:0;max-width:100%;overflow:hidden}
+:is(#rows[data-view=projects], .global-project-table) .project-list-row>.project-cell[data-label="项目"]>a>small{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+:is(#rows[data-view=projects], .global-project-table) .project-list-row>.project-cell[data-label="项目"]>p{grid-column:1;grid-row:3;margin:1px 0 0}
+.project-list-row .project-cell .status{max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.project-list-row .project-cell>.actions{gap:4px}
+.project-empty{color:#879da7;font-size:12px}
+.project-row-detail{margin:2px 0 0;font-size:12px;color:var(--color-text-muted);overflow-wrap:anywhere}
+.project-overview{min-width:0;max-width:none}.project-controls{min-width:0}.project-features{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px 12px}
+.project-feature-switch{display:inline-flex;align-items:center;gap:6px;padding:4px 6px;min-height:32px;border-color:transparent;background:transparent;color:var(--color-text-muted);font-size:var(--font-size-1);white-space:nowrap}
+.project-feature-switch:hover{background:#edf4f6;filter:none}.switch-track{width:28px;height:16px;position:relative;flex-shrink:0;background:#879da7;border-radius:10px}
+.switch-track::after{content:'';position:absolute;left:2px;top:2px;width:12px;height:12px;border-radius:50%;background:#fff}
+.project-feature-switch[aria-checked=true] .switch-track{background:var(--color-brand)}.project-feature-switch[aria-checked=true] .switch-track::after{left:14px}.switch-value{min-width:1em}
+.project-task-preview{display:inline-flex;align-items:center;gap:8px;white-space:nowrap;font-size:var(--font-size-1);padding:6px;border-radius:4px;text-decoration:none}
+.project-task-preview:hover{background:#edf4f6;text-decoration:underline}.task-count-active{color:var(--color-brand);font-weight:700}.project-control-feedback{max-width:460px;text-align:right;overflow-wrap:anywhere}.project-control-feedback:empty{display:none}.project-control-feedback.control-error{color:#a2292b}
+/* Below the table breakpoint the same cells become labelled pairs, so the category is still named and the page never
+   scrolls sideways; the list container itself is the only thing that may scroll. */
+@media(max-width:1279px){
+  :is(#rows[data-view=projects], .global-project-table) .project-table-head{display:none}
+  :is(#rows[data-view=projects], .global-project-table) .project-list-row{grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 14px;padding:8px 12px;align-items:start;min-height:0}
+  :is(#rows[data-view=projects], .global-project-table) .project-list-row>.project-cell[data-label="项目"]{grid-column:1/-1}
+  :is(#rows[data-view=projects], .global-project-table) .project-list-row>.project-cell[data-label="任务"],:is(#rows[data-view=projects], .global-project-table) .project-list-row>.project-cell[data-label="操作"]{grid-column:1/-1}
+  :is(#rows[data-view=projects], .global-project-table) .project-list-row>.project-cell[data-label="操作"]{justify-content:flex-start}
+  /* Every other cell is one label/value line, so the card stays compact instead of stacking a caption over each chip. */
+  /* #1002: include 操作 in the same labelled grid so 设置 does not sit on the ::before caption. 任务 stays out: it is a longer summary line.
+     操作 uses max-content for the button so tablet (flex-end) and phone layouts keep a compact 设置 control instead of stretching it. */
+  .project-list-row>.project-cell[data-label]:not([data-label="项目"]):not([data-label="任务"]){display:grid;grid-template-columns:58px minmax(0,1fr);align-items:center;gap:6px;font-size:12px}
+  .project-list-row>.project-cell[data-label="操作"]:not([data-label="项目"]):not([data-label="任务"]){grid-template-columns:58px max-content}
+  .project-list-row>.project-cell[data-label]:not([data-label="项目"])::before{content:attr(data-label);color:var(--color-text-muted);font-size:11px;line-height:1.3}
+  .project-features{justify-content:flex-start}.project-control-feedback{text-align:left}
+}
+/* Tablet: three label/value pairs per line keeps the card as dense as the row it replaces. */
+@media(min-width:600px) and (max-width:1279px){
+  :is(#rows[data-view=projects], .global-project-table) .project-list-row{grid-template-columns:repeat(3,minmax(0,1fr))}
+  /* Keep the task summary and the action on one line here instead of giving each its own row. */
+  :is(#rows[data-view=projects], .global-project-table) .project-list-row>.project-cell[data-label="任务"]{grid-column:1/3}
+  :is(#rows[data-view=projects], .global-project-table) .project-list-row>.project-cell[data-label="操作"]{grid-column:3;justify-content:flex-end}
+}
+@media(max-width:760px){.project-feature-switch{min-height:36px}.project-features{gap:6px 8px}.project-task-preview{min-height:36px}}
+@media(max-width:599px){
+  .global-project-table .project-feature-switch{gap:4px;padding:4px;min-width:0}
+  .global-project-table .project-feature-switch>span:first-child{display:none}
+  .global-project-table .project-list-row>.project-cell[data-label]:not([data-label="项目"]):not([data-label="任务"]){grid-template-columns:44px minmax(0,1fr)}
+  :is(#rows[data-view=projects], .global-project-table) .project-list-row>.project-cell[data-label="操作"]{grid-template-columns:44px max-content}
+}
+@media(max-width:360px){
+  #settings-panel .global-project-table .project-list-row{grid-template-columns:minmax(0,1fr)}
+  #settings-panel .global-project-table .project-list-row>.project-cell[data-label]:not([data-label="项目"]):not([data-label="任务"]){grid-template-columns:58px minmax(0,1fr)}
+  #settings-panel .global-project-table .project-list-row>.project-cell[data-label="操作"]{grid-template-columns:58px max-content}
+  #settings-panel .global-project-table .project-list-row>.project-cell[data-label="任务"],#settings-panel .global-project-table .project-list-row>.project-cell[data-label="操作"]{grid-column:1;justify-content:flex-start}
+}
+
+@media(min-width:1001px){.project-task-preview{min-width:112px;justify-content:flex-end}}
+.permission-check{display:grid;gap:6px;justify-items:start;margin-top:6px;min-width:0}.permission-result{display:grid;gap:6px;min-width:0}.permission-result p,.permission-result ul{margin:0}.permission-result ul{padding-left:20px}.permission-result li,.permission-result a{overflow-wrap:anywhere}.permission-result p:not([class]){color:#22313a}.permission-result a{color:var(--color-brand);text-underline-offset:3px}
+button.quiet.destructive{color:#a02b31}
+@media(min-width:761px){.external-group .row.has-actions{grid-template-columns:minmax(0,1fr) auto max-content}}
+/* In-page confirmation (confirmDialog in views.js) */
+dialog.confirm-dialog{width:min(500px,calc(100vw - 24px));padding:0;border:0;border-radius:10px;box-shadow:0 20px 56px #0f2f3b47;overflow:hidden}
+dialog.confirm-dialog::backdrop{background:#16374485}
+.confirm-form{gap:0}
+.confirm-head{display:flex;align-items:center;gap:12px;padding:22px 24px 8px}
+.confirm-head h2{font-size:var(--font-size-touch);line-height:1.45;overflow-wrap:anywhere}
+.confirm-icon{flex:none;width:32px;height:32px;border-radius:50%;display:grid;place-items:center;font-size:var(--font-size-touch);font-weight:700;background:#e8f0fb;color:#2c5791}
+.confirm-icon.danger{background:#fbeaea;color:#a02b31}
+.confirm-body{display:grid;gap:8px;padding:2px 24px 16px 68px;color:var(--color-text-muted);font-size:var(--font-size-label);line-height:1.7;overflow-wrap:anywhere}
+.confirm-body p,.confirm-body ul{margin:0}.confirm-body ul{padding-left:18px}.confirm-body li+li{margin-top:2px}
+.confirm-body label{margin-top:4px;color:#22313a}
+.confirm-status{margin:0;padding:0 24px 14px 68px;font-size:var(--font-size-label);line-height:1.6}.confirm-status:empty{display:none}
+.confirm-status.progress{color:#2c5791}.confirm-status.error{color:#a02b31}
+.confirm-actions{display:flex;justify-content:flex-end;gap:8px;padding:14px 24px;background:#f6f9fa;border-top:1px solid #e3eaf0}
+.confirm-actions button{min-width:76px;justify-content:center}
+button.danger{background:#a02b31;border-color:#a02b31;color:#fff}
+@media(max-width:760px){.confirm-head{padding:18px 18px 6px}.confirm-body,.confirm-status{padding-left:18px;padding-right:18px}.confirm-actions{padding:12px 18px}.confirm-actions button{flex:1}}
+/* Global settings: version, deployment-wide defaults and wizard settings side by side, stacking on narrow screens; the shared model list spans the full width. */
+.settings-panel{display:block;padding:0}.settings-panel .side-card h3{font-size:var(--font-size-row)}.settings-panel .side-card>h2{font-size:var(--font-size-row)}
+/* #1039: a sub-section inside a settings card (the rate-limit account names, detail-page sections) is an h3 under the
+   card's h2 but keeps the h4 size, weight and spacing it had, so the outline changes and the pixels do not. */
+.project-content .side-card :is(.card-sub,.rate-account){font-size:var(--font-size-label);margin:6px 0 0;font-weight:700;line-height:normal;color:var(--color-text)}.settings-panel .settings-wide{grid-column:1/-1}.settings-panel .side-card .flash{margin:0 0 8px}.settings-panel .side-card>form{margin-top:10px}.settings-panel .history .muted{margin:2px 0 0}
+
+/* Global settings (static/settings.js): the project page's category layout inside the list card. */
+.settings-body{border-top:1px solid #e3eaf0;min-height:calc(100svh - 170px)}
+.settings-body .project-content{max-width:none;width:100%}
+.settings-list-head{justify-content:space-between;align-items:flex-start;flex-wrap:nowrap;gap:12px}.settings-list-head>.muted{flex:1;margin:0}
+.settings-rows{margin-top:8px;border-top:1px solid #e8eef2}
+.settings-rows .row{padding:10px 0;grid-template-columns:minmax(0,1fr) max-content max-content}
+.settings-rows .row:last-child{border-bottom:0}
+.settings-rows .row-content p{margin:2px 0 0}
+@media(max-width:760px){
+  .settings-body{min-height:0}
+  .settings-list-head{flex-direction:column;align-items:stretch}.settings-list-head>button{align-self:flex-start}
+  .settings-rows .row{grid-template-columns:minmax(0,1fr) auto}.settings-rows .row>.actions{grid-column:1/-1}
+}
+
+/* Provider connection settings are edited once, separately from model-specific operations. */
+.provider-create{margin-top:12px}#provider-edit{width:min(800px,calc(100vw - 24px))}#provider-edit form{gap:16px}.provider-fields{border:0;padding:0;margin:0;min-width:0;display:flex;flex-direction:column;gap:10px}.provider-fields h3{margin:8px 0 0;font-size:var(--font-size-2)}.provider-fields p{margin:0}.provider-fields .model-chips:empty,.provider-fields .probe-result:empty{display:none}.provider-fields>button{align-self:flex-start}.provider-manual{align-items:flex-end}.provider-manual label{flex:1 1 220px}.provider-selected .model-chip{border-color:var(--color-brand);color:var(--color-brand)}.provider-editor-actions{justify-content:flex-end}.provider-editor-actions .destructive{margin-right:auto}.provider-fields .model-chips{max-height:220px;overflow:auto;padding:2px}.provider-fields input[type=search]{max-width:320px}
+@media(max-width:760px){#provider-edit{padding:16px}.provider-head>button{margin-left:0}.provider-manual label{flex-basis:100%}.provider-editor-actions{gap:8px}}
+/* Workflows: a list beside a tabbed editor over the whole width, the chat as a side panel, and the flowchart drawn from the prompt. */
+.release-advice{margin:6px 0 10px;font-size:var(--font-size-label);line-height:1.6;overflow-wrap:anywhere;color:#24414f}.release-advice h4{margin:10px 0 4px;font-size:var(--font-size-label)}.release-advice p{margin:4px 0}.release-advice ul,.release-advice ol{margin:4px 0;padding-left:20px}.release-advice code{font:var(--font-size-1) ui-monospace,monospace;background:#eef3f5;border-radius:3px;padding:0 3px}
+
+/* Knowledge previews remain separate rows on narrow screens. */
+.history.knowledge-list li{display:block}.knowledge-list li button{max-width:100%;text-align:left;white-space:normal;overflow-wrap:anywhere}.knowledge-list li p{margin:4px 0;overflow-wrap:anywhere}
+
+/* Task view (static/views.js): the next step right under the title on every width, then the timeline and the side
+   panel with the task's own facts and who executes it. */
+.task-next{flex-shrink:0;display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 12px;padding:9px 16px;border-bottom:1px solid #d7e3f3;background:#f4f8fd;min-width:0}
+.task-next h3{margin:0;font-size:var(--font-size-label);color:#2c5791;flex-shrink:0}.task-next .task-next-text{flex:1 1 260px;min-width:0;margin:0;font-size:var(--font-size-2);line-height:1.6;color:var(--color-text);overflow-wrap:anywhere}
+@media(max-width:860px){.task-next{padding:8px 12px}}
+.task-facts{display:grid;gap:0}.task-facts>h3{margin-bottom:4px}
+.task-fact{padding:9px 0;border-top:1px solid #edf1f4;min-width:0}.task-fact:first-of-type{border-top:0;padding-top:4px}
+.task-fact-head{display:flex;align-items:center;justify-content:space-between;gap:8px}.task-fact-head h4{margin:0;font-size:var(--font-size-label);color:var(--color-text)}
+.task-fact .facts{margin-top:6px}.task-fact>p{margin:6px 0 0}.task-fact .history{margin-top:4px}.task-fact>button{margin-top:8px}
+.task-fact-list{margin:0;padding-left:18px;font-size:var(--font-size-1);display:grid;gap:4px}.task-fact-list li{overflow-wrap:anywhere}.task-fact-list li>.status{margin-left:6px}.task-fact-list li code{margin-left:6px;font-size:var(--font-size-1);color:var(--color-text-muted)}
+.task-execution h4{margin:10px 0 4px;font-size:var(--font-size-label);color:var(--color-text)}
+.role-work{margin:0;padding-left:20px;display:grid;gap:8px;font-size:var(--font-size-label)}.role-work p{margin:3px 0 0;overflow-wrap:anywhere}
+.role-work-head{display:flex;align-items:center;gap:6px 8px;flex-wrap:wrap}
+
+/* 角色 page (static/project.js rolesSection): entries under the controller, then how the controller delegates. */
+.roles-page{display:flex;flex-direction:column;gap:12px;min-width:0}
+.roles-state{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:2px}
+.role-entries{list-style:none;margin:10px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px}
+.role-entries li{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:2px 8px;padding:8px 10px;border:1px solid #e3eaf0;border-radius:6px;font-size:var(--font-size-label)}
+.role-entries li>.muted{grid-column:1;overflow-wrap:anywhere}.role-entries li>.status{grid-column:2;grid-row:1/3}.role-entries .role-entry-workers{grid-column:1/-1;font-size:var(--font-size-1);color:#2c5791;overflow-wrap:anywhere}
+.role-lanes{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,2fr) auto minmax(0,1fr);gap:10px;align-items:stretch;margin-top:10px}
+.role-lane{display:grid;align-content:start;gap:8px;min-width:0;padding:10px;border-radius:7px;background:#f7fafb;border:1px solid #e3eaf0}
+.role-lane>h4{margin:0;font-size:var(--font-size-1);color:var(--color-text-muted);letter-spacing:.04em}
+.role-lane:nth-of-type(2){grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}.role-lane:nth-of-type(2)>h4{grid-column:1/-1}
+.role-lane-arrow{align-self:center;color:#7f98a5;font-size:var(--font-size-4)}
+.role-tile{display:grid;align-content:start;gap:5px;min-width:0;padding:9px 10px;border:1px solid #dce6eb;border-radius:6px;background:#fff}
+.role-tile p{margin:0;font-size:var(--font-size-1);line-height:1.55;overflow-wrap:anywhere}.role-tile-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.role-tile-head strong{font-size:var(--font-size-2)}
+.role-executor{display:flex;align-items:center;flex-wrap:wrap;gap:4px 6px}
+.role-disabled{opacity:.6}.role-framework{border-style:dashed;background:#fbfcfd}
+.roles-delegation>h4{margin-top:14px}.role-coordinator{display:grid;grid-template-columns:minmax(0,420px);margin-top:6px}
+@media(max-width:900px){.role-lanes{grid-template-columns:minmax(0,1fr)}.role-lane-arrow{justify-self:center;transform:rotate(90deg)}}
+/* The Manager page: the prompt editor with its sections, the work type table, event switches and the latest decisions. */
+.manager-holder,.manager-page,.project-triggers-page{display:grid;gap:16px;min-width:0}.manager-prompt textarea.code{min-height:320px;width:100%;box-sizing:border-box}
+.manager-sections{list-style:none;margin:0;padding:0;display:grid;gap:8px}.manager-sections>li{display:grid;gap:4px;padding:8px 0;border-bottom:1px solid #eef3f5}
+.manager-section-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}.manager-sections button{justify-self:start}
+.manager-section-list>summary{cursor:pointer;font-weight:600;margin:8px 0}.manager-writes{display:grid;gap:4px}.manager-writes .check{font-size:var(--font-size-label)}
+.manager-events{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr));gap:6px 16px;margin-bottom:8px}
+.manager-dispatch{list-style:none;margin:0;padding:0;display:grid;gap:10px}.manager-dispatch-entry{display:grid;gap:4px;padding:8px 0;border-bottom:1px solid #eef3f5;min-width:0}
+.manager-dispatch-entry p{margin:0;overflow-wrap:anywhere}.manager-dispatch-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+
+/* Manager history filters wrap into the same readable controls on narrow screens. */
+.dispatch-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:12px;align-items:end;margin:12px 0}
+.dispatch-filters label{display:grid;gap:5px;min-width:0}.dispatch-filters input,.dispatch-filters select{width:100%;min-width:0;box-sizing:border-box}
+.dispatch-reader>.actions{margin-bottom:10px}.dispatch-reader>ol{margin-bottom:12px}
+.dispatch-detail{width:min(760px,calc(100vw - 32px));max-height:calc(100dvh - 32px);box-sizing:border-box;overflow:auto}
+.dispatch-detail-body{display:grid;gap:16px;min-width:0}.dispatch-detail-body section{min-width:0;overflow-wrap:anywhere}.dispatch-detail-body h3{margin:0 0 8px}.dispatch-detail-body .facts{min-width:0}.dispatch-detail>.actions{position:sticky;bottom:-1px;background:var(--color-surface,#fff);padding:12px 0;margin-bottom:0;flex-wrap:wrap}
+.dispatch-detail>[role=status]:empty{display:none}
+
+/* On a narrow screen each work type is a block of its own, every cell under its caption. */
+@media(max-width:650px){.project-table[aria-label="工作类型"] thead{display:none}.project-table[aria-label="工作类型"],.project-table[aria-label="工作类型"] tbody,.project-table[aria-label="工作类型"] tr,.project-table[aria-label="工作类型"] td{display:block;width:auto}
+  .project-table[aria-label="工作类型"] tr{padding:8px 0;border-bottom:1px solid #d7e3e8}.project-table[aria-label="工作类型"] td{border:0;padding:4px 0}
+  .project-table[aria-label="工作类型"] td:not(:first-child)::before{content:attr(data-label);display:block;font-size:var(--font-size-1);color:var(--color-text-muted);margin-bottom:2px}}
+
+
+/* Role navigation stays readable beside wide editable tables and on narrow screens. */
+.role-nav { display:flex; flex-wrap:wrap; gap:.4rem; margin-bottom:1rem; }
+.role-nav a { padding:.5rem .8rem; border:1px solid var(--border, #d8dee9); border-radius:6px; text-decoration:none; }
+.role-nav a[aria-current="page"] { font-weight:700; background:var(--surface-alt, #edf2fa); }
+.roles-page .side-card:has(.project-table) { overflow-x: auto; }
+.roles-page .project-table { table-layout: auto; }
+.roles-page .project-table th { white-space: nowrap; }
+.roles-page .project-table th, .roles-page .project-table td { padding: var(--space-4); vertical-align: middle; line-height: var(--line-height-body); }
+.roles-page .project-table td[data-label="启用"] { width: 6.5em; white-space: nowrap; text-align: center; }
+.roles-page .project-table td[data-label="角色"] { white-space: nowrap; }
+.roles-page .project-table td[data-label="职责"] { max-width: 32em; overflow: hidden; }
+.roles-page .project-table td[data-label="职责"] > :is(.muted, p) {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; text-overflow: ellipsis; margin: 4px 0 0; font-size: var(--font-size-1);
+}
+
+.roles-page input:not([type="checkbox"]), .roles-page select, .roles-page textarea { box-sizing:border-box; max-width:100%; }
+.roles-page .side-card > label { display:flex; flex-direction:column; gap:.3rem; margin:.75rem 0; }
+.roles-page .side-card > label.check { flex-direction:row; }
+.role-permissions { min-width:0; margin:1rem 0; padding:1rem; }
+.role-permission-group { min-width:0; margin:.8rem 0; }
+.role-permission-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,2fr); gap:.8rem; align-items:center; padding:.5rem 0; border-bottom:1px solid var(--border, #d8dee9); }
+.role-permission-row label { display:flex; flex-direction:column; gap:.3rem; min-width:0; }
+.role-permission-row p { font-size:.85rem; margin:0; overflow-wrap:anywhere; }
+.role-permission-details .role-permissions { padding:.4rem; }
+.role-permission-details .role-permission-row { grid-template-columns:minmax(0,1fr); }
+@media(max-width:600px) { .role-permission-row { grid-template-columns:minmax(0,1fr); } }
+.role-choices { display:flex; flex-wrap:wrap; gap:.7rem; margin:.8rem 0; }
+.role-stage, .role-skill { min-width:0; margin:.8rem 0; }
+.role-stage > label, .role-skill > label { display:flex; flex-direction:column; margin:.6rem 0; }
+
+/* A single mounted skill editor shares the role draft and save bar. */
+.skill-catalog-layout{display:grid;grid-template-columns:minmax(180px,240px) minmax(0,1fr);gap:16px;align-items:start}.skill-catalog-sidebar{min-width:0;display:grid;gap:10px}.skill-catalog-sidebar label{display:grid;gap:6px}.skill-catalog-sidebar input{min-width:0;width:100%;box-sizing:border-box}.skill-catalog-nav{display:grid;gap:6px;max-height:55vh;overflow:auto}.skill-catalog-nav button{white-space:normal;text-align:left;overflow-wrap:anywhere}.skill-catalog-nav button[aria-pressed=true]{border-color:var(--color-brand,#2563eb);background:var(--color-brand-weak,#eff6ff)}
+.skill-catalog-editor{min-width:0;margin:0}.skill-saved-facts{min-width:0;overflow-wrap:anywhere}.skill-saved-facts code{overflow-wrap:anywhere;word-break:break-all}.skill-saved-facts .facts{min-width:0}.skill-catalog-editor fieldset{min-width:0}.skill-catalog-editor input,.skill-catalog-editor textarea,.skill-catalog-editor select{max-width:100%;box-sizing:border-box}
+@media(max-width:767px){.skill-catalog-layout{grid-template-columns:minmax(0,1fr)}.skill-catalog-nav{max-height:200px}.skill-workspace>.skill-catalog-layout>.card{padding:12px}}
+/* Dependency preview is derived from the shared draft; cards keep the same editable policy fields at every width. */
+.stage-graph-layout{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(180px,1fr);gap:16px;overflow-x:auto;max-width:100%;list-style:none;margin:12px 0;padding:0}.stage-graph-level{min-width:0}.stage-graph-level h4{margin:0 0 8px}.stage-graph-nodes{display:grid;gap:10px;list-style:none;margin:0;padding:0}.stage-graph-node{min-width:0;margin:0;padding:12px;overflow-wrap:anywhere}.stage-graph-node button{white-space:normal;overflow-wrap:anywhere;width:100%;text-align:left}.stage-graph-node p{margin:6px 0 0}.stage-policy-page{display:grid;gap:16px;min-width:0}.stage-policy-page .side-card{min-width:0}.stage-policy-cards{display:grid;gap:16px;margin:12px 0;padding-left:24px}.stage-policy-cards>li{min-width:0}.stage-policy-cards .role-stage{margin:0}.stage-policy-error:empty{display:none}.role-stage:focus{outline:2px solid currentColor;outline-offset:3px}.stage-policy-issues{padding-left:24px;overflow-wrap:anywhere}
+@media(max-width:767px){.stage-graph-layout{grid-auto-flow:row;grid-auto-columns:auto;grid-template-columns:minmax(0,1fr);overflow:visible}.stage-policy-cards{padding-left:20px}.stage-policy-page .role-stage{padding:10px}}
+
+
+.role-save { position:sticky; bottom:0; padding:.8rem 0; background:var(--surface, white); }
+
+@media(max-width:850px) {
+  .roles-page .project-table thead { display:none; }
+  .roles-page .project-table, .roles-page .project-table tbody, .roles-page .project-table tr, .roles-page .project-table td { display:block; width:auto; min-width:0; }
+  .roles-page .project-table tr { padding:.8rem 0; border-bottom:1px solid #d8dee9; }
+  .roles-page .project-table td { border:0; }
+  .roles-page .project-table td::before { content:attr(data-label); display:block; font-weight:600; margin-bottom:.3rem; }
+}
+.project-content .computer-status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 900px) { .project-content .computer-status-grid { grid-template-columns: minmax(0, 1fr); } }
+.machine-config-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,280px);gap:20px;align-items:start}
+.machine-config-fields,.machine-config-group{display:flex;flex-direction:column;gap:14px;min-width:0}
+.machine-config-group+.machine-config-group{border-top:1px solid var(--color-border);padding-top:20px;margin-top:6px}
+.machine-config-group h4,.machine-config-impact h4{margin:0;font-size:var(--font-size-touch)}
+.machine-config-field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.machine-config-origin{color:var(--color-text-muted);font-size:var(--font-size-1);line-height:1.6;overflow-wrap:anywhere}
+.machine-config-error{color:#a2292b;font-size:var(--font-size-1);line-height:1.6;overflow-wrap:anywhere}
+.machine-config-follow{color:var(--color-text-muted);font-size:var(--font-size-1);line-height:1.6}
+.machine-config-impact{display:flex;flex-direction:column;gap:12px;border:1px solid var(--color-border);border-radius:var(--radius-card);background:var(--color-surface-alt);padding:16px;min-width:0}
+.machine-config-draft{font-weight:600;overflow-wrap:anywhere}
+@media(max-width:1200px){.machine-config-layout{grid-template-columns:minmax(0,1fr)}.machine-config-impact{order:-1}}
+/* #238: a delivery detail reads reception, signature and processing as labelled sections, then the Manager dispatch and the collapsed raw request. */
+#detail-body code { overflow-wrap:anywhere; }
+#detail-body .detail-section { margin-top:14px; }
+#detail-body .detail-section h3 { margin:0; font-size:var(--font-size-label); }
+#detail-body .detail-section .facts { margin-top:6px; }
+#detail-body .delivery-tasks { margin:8px 0 0; padding-left:18px; font-size:var(--font-size-1); line-height:1.7; }
+#detail-body .dispatch-entry { margin-top:8px; padding-left:10px; border-left:2px solid #e3eaf0; }
+#detail-body .dispatch-entry p { margin:0; font-size:var(--font-size-1); line-height:1.6; }
+#detail-body details.raw-payload { margin-top:14px; border-top:1px solid #e3eaf0; padding-top:10px; }
+
+/* Role editing keeps one mounted form and one draft while navigating its named sections. */
+/* Keep rounded clipping without making the project a separate scrolling ancestor for the toolbar. */
+/* #569: do not clip the shell; let the role page use the content column. */
+.project-page:has(.roles-page){overflow:visible}
+.project-page:has(.roles-page) .project-content{max-width:none;width:100%}
+.roles-page .project-table{width:100%;table-layout:auto}
+.roles-page .project-table td{min-width:0;vertical-align:top;overflow-wrap:anywhere}
+/* .role-nav keeps the #562 single scrolling row below 1440px; only the editor section nav wraps. */
+.roles-page .role-nav{overflow-x:auto;max-width:100%}
+.roles-page .role-editor-nav{overflow-x:auto;max-width:100%;flex-wrap:wrap}
+.roles-page .role-editor-nav button{white-space:normal;overflow-wrap:anywhere}
+.roles-page label.check,.roles-page .role-enable{align-items:center;gap:8px;min-height:var(--control-min,44px)}
+.roles-page input[type=checkbox]{width:18px;height:18px;flex:none;accent-color:var(--color-brand,#1b6b7a);cursor:pointer}
+.roles-page input[type=checkbox]:disabled{cursor:not-allowed;accent-color:var(--color-text-muted,#607087)}
+.roles-page .role-form-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;margin:0 0 8px}
+.roles-page .role-form-head h3{margin:0;min-width:0;flex:1 1 auto;overflow-wrap:anywhere}
+.roles-page .role-form-head .role-enable-block,.roles-page .role-form-head .role-enable{margin:0;flex:0 1 auto}
+.roles-page .role-enable-block{display:flex;flex-direction:column;align-items:flex-start;gap:4px}
+.roles-page .role-enable-reason{margin:0;font-size:13px;color:var(--color-text-muted,#607087);overflow-wrap:anywhere}
+@media(max-width:767px){
+  .roles-page .side-card>label{margin:.45rem 0}
+  .roles-page h2,.roles-page h3{overflow-wrap:anywhere}
+}
+.role-editor-fields{border:0;padding:0;margin:0;min-width:0;display:grid;gap:12px}
+.role-editor-group{min-width:0;padding:16px 0;border-top:1px solid var(--border,#d8dee9);scroll-margin-top:20px}
+.role-editor-group>label{display:flex;flex-direction:column;gap:5px;margin:12px 0}
+.role-editor-group>label.check{flex-direction:row}
+.role-editor-group>h4{font-size:var(--font-size-3);margin:0 0 12px}
+.role-model-resolution{min-width:0;margin:16px 0}.role-model-resolution dl{display:grid;grid-template-columns:minmax(100px,1fr) minmax(0,3fr);gap:8px}.role-model-resolution dd{margin:0}.role-model-resolution dd,.role-model-resolution p{overflow-wrap:anywhere}.role-model-resolution>label{display:flex;flex-direction:column;gap:5px;margin:12px 0}
+.role-save{top:0;bottom:auto;gap:8px;padding:12px;border:1px solid var(--border,#d8dee9);background:var(--surface,#fff);z-index:2}
+.role-save>[role=status],.role-save>[role=alert]{flex-basis:100%;margin:0;overflow-wrap:anywhere}
+.role-save>[role=alert]:empty{display:none}
+.role-compare-field{min-width:0;margin:12px 0}
+.role-compare-values{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.role-compare-values>div{min-width:0}
+.role-compare-values pre,.roles-page details pre{max-height:240px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--font-size-label)}
+@media(max-width:767px){.role-save{top:0;bottom:auto;padding:10px;background:var(--surface,#fff)}.role-save button{min-height:44px}.role-compare-values{grid-template-columns:minmax(0,1fr)}}
+.audit-filters{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}
+.audit-filters button{font-size:var(--font-size-1);padding:4px 10px}
+.audit-filters button[aria-pressed=true]{border-color:var(--color-brand);color:var(--color-brand);background:#e8f3f4}
+/* #698: one audit row reads as a sentence (action · who), then time and the object link; codes fold under 技术信息. */
+.history li.audit-row{display:block;padding:9px 0}
+.audit-row-head{font-size:var(--font-size-row,14px);overflow-wrap:anywhere}.audit-row-head .audit-actor{color:var(--color-text-muted,#4b5563)}
+.audit-row-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin-top:2px}
+.audit-tech{margin-top:2px}.audit-tech>summary{cursor:pointer;color:var(--color-text-muted,#4b5563);font-size:var(--font-size-1)}
+.audit-tech dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 10px;margin:4px 0 0}.audit-tech dt{color:var(--color-text-muted,#4b5563)}.audit-tech dd{margin:0;min-width:0}
+
+/* #1068: the role list says when the configuration is the project's own and offers the way back to the defaults. */
+.role-config-source { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.role-config-source > p { margin: 0; }
+
+/* #566: role detail is one scrolling form; advanced fields stay folded. A flex summary loses the native marker, so it
+   draws its own (#1068). */
+.role-form-advanced { margin-top: 16px; padding-top: 8px; border-top: 1px solid var(--border, #d8dee9); }
+.role-form-advanced > summary { cursor: pointer; font-weight: 600; min-height: var(--control-min, 44px); display: flex; align-items: center; list-style: none; }
+.role-form-advanced > summary::-webkit-details-marker { display: none; }
+.role-form-advanced > summary::before { content: '▸'; margin-right: 8px; color: var(--color-text-muted); }
+.role-form-advanced[open] > summary::before { content: '▾'; }
+.role-nav a[data-testid="role-list-link"] { font-weight: 600; }
+
+/* #570: technical identifiers and the danger zone stay folded on the basic settings first screen. */
+.basic-advanced, .project-danger-fold { margin: 16px 0 0; }
+.basic-advanced > summary, .project-danger-fold > summary {
+  cursor: pointer; min-height: var(--control-min, 44px); display: flex; align-items: center;
+  font-size: 14px; font-weight: 600; list-style: none;
+}
+.basic-advanced > summary::-webkit-details-marker,
+.project-danger-fold > summary::-webkit-details-marker { display: none; }
+.basic-advanced > summary::before,
+.project-danger-fold > summary::before { content: '▸'; margin-right: 8px; color: var(--color-text-muted); }
+.basic-advanced[open] > summary::before,
+.project-danger-fold[open] > summary::before { content: '▾'; }
+.basic-advanced > .side-card, .project-danger-fold > .side-card { margin-top: 12px; }
+
+/* #567: one sticky save bar, one primary「保存」, plain status. */
+.console-save-bar { position: sticky; top: 0; z-index: 4; grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 16px; padding: 12px; border: 1px solid var(--border, #d8dee9); background: var(--surface, #fff); }
+.console-save-bar > [role=status], .console-save-bar > [role=alert] { flex-basis: 100%; margin: 0; overflow-wrap: anywhere; }
+.console-save-bar > [role=alert]:empty { display: none; }
+.console-save-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.console-save-actions button { min-height: var(--control-min, 44px); }
+.console-save-advanced { flex-basis: 100%; }
+.console-save-advanced > summary { cursor: pointer; min-height: var(--control-min, 44px); display: flex; align-items: center; list-style: none; }
+.console-save-advanced > summary::-webkit-details-marker { display: none; }
+.console-save-advanced > summary::before { content: '▸'; margin-right: 8px; }
+.console-save-advanced[open] > summary::before { content: '▾'; }
+@media (max-width: 767px) {
+  .console-save-bar { padding: 10px; }
+}
+
+/* #705: container CLI availability card and per-role runtime status panel. */
+[data-testid="backend-availability-card"] .badge,
+.role-backend-runtime .badge { white-space: nowrap; }
+.role-backend-runtime { margin: 12px 0; padding: 12px 14px; border: 1px solid var(--border, #d8dee9); border-radius: 8px; background: var(--surface-subtle, #f8fafc); }
+.role-backend-runtime > p { margin: 0 0 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.role-backend-runtime dl { margin: 0; display: grid; grid-template-columns: minmax(120px, max-content) minmax(0, 1fr); gap: 6px 14px; }
+.role-backend-runtime dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 767px) {
+  .role-backend-runtime dl { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+}
+
+/* #952: Standalone Task Detail Page (#/tasks/:id), Role Flow Diagram, and Two-Level Collapsible Execution Trace */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+.priority-reason-input { width: 100%; box-sizing: border-box; }
+.btn-xs { min-height: 28px; padding: 3px 8px; font-size: var(--font-size-1); }
+
+.task-detail-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 1180px;
+  margin: 0 auto;
+  min-width: 0;
+}
+.task-detail-backbar { display: flex; align-items: center; }
+.task-back-link { font-weight: 600; font-size: var(--font-size-label); }
+
+.task-summary-card, .task-trace-section {
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: 18px 20px;
+  box-shadow: var(--shadow-card);
+  min-width: 0;
+}
+.task-browser-evidence:empty { display: none; }
+.task-browser-evidence { margin-top: 12px; min-width: 0; overflow-wrap: anywhere; }
+.task-summary-card .browser-evidence img { max-width: 100%; height: auto; }
+.task-summary-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+.task-summary-badges { gap: 8px; min-width: 0; }
+.task-id-chip {
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #f1f5f9;
+  color: #334155;
+  font-size: var(--font-size-1);
+}
+.task-repo-link {
+  text-decoration: none;
+  font-weight: 600;
+  color: var(--color-brand);
+}
+.task-repo-link:hover { text-decoration: underline; }
+.task-cancel-btn { color: #991b1b; border-color: #fecaca; }
+
+.task-detail-title {
+  margin: 12px 0 8px;
+  font-size: var(--font-size-5, 22px);
+  line-height: 1.35;
+  letter-spacing: -0.015em;
+  overflow-wrap: anywhere;
+}
+.task-goal-box {
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  min-width: 0;
+}
+.task-goal-line { margin: 0; font-size: var(--font-size-2); line-height: 1.55; overflow-wrap: anywhere; }
+.task-goal-text { white-space: pre-wrap; }
+.task-criteria-fold { margin-top: 8px; }
+.task-criteria-list { margin: 6px 0 0; padding-left: 18px; color: var(--color-text); font-size: var(--font-size-label); }
+
+.task-detail-page .task-next {
+  margin: 10px 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.task-detail-page .task-next-text {
+  margin: 0;
+  font-size: var(--font-size-label);
+  color: #475569;
+}
+.task-fault-box {
+  margin-top: 10px;
+  padding: 9px 12px;
+  border-radius: 6px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #7f1d1d;
+  font-size: var(--font-size-label);
+  overflow-wrap: anywhere;
+}
+
+/* External Associations Bar (Issue, PR, GitHub Actions, Delivery) */
+.task-external-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #edf2f7;
+  min-width: 0;
+}
+.task-ext-item {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  min-width: 0;
+  font-size: var(--font-size-label);
+}
+.task-ext-label {
+  font-size: var(--font-size-1);
+  font-weight: 600;
+  color: #475569;
+  white-space: nowrap;
+}
+.task-ext-link {
+  color: var(--color-brand);
+  font-weight: 600;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.task-ext-link:hover { text-decoration: underline; }
+.task-ext-sublink {
+  font-size: var(--font-size-1);
+  color: var(--color-brand);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.task-ext-sublink:hover { text-decoration: underline; }
+.console-ready button.task-ext-sublink, button.task-ext-sublink {
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+@media (min-width: 768px) {
+  .console-ready button.task-ext-sublink, button.task-ext-sublink { min-height: 28px; }
+}
+.task-check-pills { display: flex; flex-wrap: wrap; gap: 5px; }
+.task-check-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.check-pill-pass { background: #dcfce7; color: #14532d; border: 1px solid #86efac; }
+.check-pill-running { background: #dbeafe; color: #1e3a8a; border: 1px solid #93c5fd; }
+.check-pill-fail { background: #fee2e2; color: #7f1d1d; border: 1px solid #fca5a5; }
+
+/* Role Flow Diagram (shared between Project Task List View and Task Detail Page) */
+.task-flow-bar {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #edf2f7;
+  min-width: 0;
+}
+.task-flow-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-bottom: 8px;
+}
+.flow-scroll-wrap {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.role-flow-diagram {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.flow-arrow { color: #64748b; font-size: 13px; flex-shrink: 0; user-select: none; }
+.flow-parallel-stack {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 3px 5px;
+  border-left: 2px solid #cbd5e1;
+  border-right: 2px solid #cbd5e1;
+  border-radius: 6px;
+}
+.flow-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  min-height: 0;
+}
+.role-flow-compact .flow-node { padding: 3px 8px; font-size: 12px; }
+.console-ready button.flow-node-clickable, button.flow-node-clickable { cursor: pointer; min-height: 0; padding: 5px 11px; }
+.console-ready button.flow-node-clickable:hover, button.flow-node-clickable:hover { filter: brightness(0.96); box-shadow: 0 1px 3px rgba(15,23,42,0.12); }
+.console-ready .flow-node.flow-node-completed, .console-ready .flow-node.flow-node-delegated,
+.flow-node-completed, .flow-node-delegated {
+  background: #dcfce7;
+  background-color: #dcfce7;
+  border-color: #86efac;
+  color: #14532d;
+}
+.console-ready .flow-node.flow-node-returned, .console-ready .flow-node.flow-node-paused,
+.flow-node-returned, .flow-node-paused {
+  background: #fef3c7;
+  background-color: #fef3c7;
+  border-color: #fcd34d;
+  color: #78350f;
+}
+.console-ready .flow-node.flow-node-running,
+.flow-node-running {
+  background: #dbeafe;
+  background-color: #dbeafe;
+  border-color: #60a5fa;
+  color: #1e3a8a;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.16);
+}
+.console-ready .flow-node.flow-node-queued,
+.flow-node-queued {
+  background: #f1f5f9;
+  background-color: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+.console-ready .flow-node.flow-node-pending,
+.flow-node-pending {
+  background: #f8fafc;
+  background-color: #f8fafc;
+  border-style: dashed;
+  border-color: #94a3b8;
+  color: #475569;
+}
+.console-ready .flow-node.flow-node-failed,
+.flow-node-failed {
+  background: #fee2e2;
+  background-color: #fee2e2;
+  border-color: #fca5a5;
+  color: #7f1d1d;
+}
+.flow-node-badge { font-weight: 700; }
+.flow-pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #1d4ed8;
+  flex-shrink: 0;
+  animation: live-pulse 1.2s ease-in-out infinite;
+}
+
+/* Two-Level Collapsible Execution Trace */
+.task-trace-section.task-layout { display: flex; flex-direction: column; gap: 12px; }
+.task-trace-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+.task-trace-title-group { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.task-trace-title-group h2 { margin: 0; font-size: var(--font-size-3); }
+.role-runs-list { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+
+/* Level 1: Outer Role Run Fold */
+.role-run-fold {
+  border: 1px solid #dbe4ee;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+  min-width: 0;
+}
+.role-run-fold.role-run-running {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
+}
+.role-run-fold.role-run-returned, .role-run-fold.role-run-paused {
+  border-color: #fcd34d;
+}
+.role-run-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 12px 14px;
+  background: #f8fafc;
+  cursor: pointer;
+  list-style: none;
+  min-width: 0;
+}
+.role-run-summary::-webkit-details-marker { display: none; }
+.role-run-running > .role-run-summary { background: #eff6ff; }
+.role-run-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.role-run-title-row::before {
+  content: '▸';
+  color: #475569;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.role-run-fold[open] > .role-run-summary .role-run-title-row::before { content: '▾'; }
+.role-run-name { font-size: var(--font-size-2); color: var(--color-text); }
+.role-run-brief {
+  color: #475569;
+  font-size: var(--font-size-label);
+  overflow-wrap: anywhere;
+}
+.role-run-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  font-size: var(--font-size-1);
+  color: #475569;
+}
+.role-run-model {
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #edf2f7;
+  color: #334155;
+  font-weight: 500;
+}
+.role-run-body {
+  padding: 12px 14px 14px;
+  border-top: 1px solid #edf2f7;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.role-run-conclusion {
+  padding: 9px 12px;
+  border-radius: 6px;
+  background: #f8fafc;
+  border-left: 3px solid var(--color-brand);
+  font-size: var(--font-size-label);
+}
+.role-run-conclusion p { margin: 0; overflow-wrap: anywhere; }
+.role-run-conclusion p + p { margin-top: 4px; }
+.role-run-findings { margin: 6px 0 0; padding-left: 18px; color: #78350f; }
+
+.role-step-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.role-step-toolbar > .muted { margin-right: auto; }
+.role-step-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Level 2: Inner Per-Step Fold */
+.step-fold.step {
+  padding: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+}
+.step-fold.step::before { display: none; }
+.step-fold-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 8px 12px;
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--font-size-label);
+  min-width: 0;
+}
+.step-fold-summary::-webkit-details-marker { display: none; }
+.step-fold-summary:hover { background: #f8fafc; }
+.step-fold-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.step-fold-title::before {
+  content: '▸';
+  color: #64748b;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.step-fold[open] > .step-fold-summary .step-fold-title::before { content: '▾'; }
+.step-fold-num { color: #475569; font-weight: 600; flex-shrink: 0; }
+.step-fold-caption { font-weight: 500; color: var(--color-text); overflow-wrap: anywhere; }
+.step-fold-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-size-1);
+  color: #475569;
+  flex-shrink: 0;
+}
+.step-fold-stat {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #f1f5f9;
+  color: #334155;
+}
+.step-fold-body {
+  padding: 8px 12px 12px;
+  border-top: 1px solid #f1f5f9;
+  background: #fcfdfe;
+  min-width: 0;
+}
+
+/* Collapsed-by-default Archive & Audit Drawer */
+.task-archive-fold {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface, #fff);
+  min-width: 0;
+}
+.task-archive-fold > summary {
+  cursor: pointer;
+  padding: 12px 18px;
+  font-weight: 600;
+  font-size: var(--font-size-label);
+  color: #475569;
+  list-style: none;
+}
+.task-archive-fold > summary::-webkit-details-marker { display: none; }
+.task-archive-fold > summary::before { content: '▸ '; color: #64748b; }
+.task-archive-fold[open] > summary::before { content: '▾ '; }
+.task-archive-body.task-side {
+  border-left: 0;
+  border-top: 1px solid #edf2f7;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  padding: 16px 18px;
+  background: #f8fafc;
+}
+.task-archive-body.task-side > .fold.raw { grid-column: 1 / -1; }
+
+@media (max-width: 767px) {
+  .task-summary-card, .task-trace-section { padding: 14px; }
+  .task-detail-title { font-size: 19px; }
+  .task-archive-body.task-side { grid-template-columns: minmax(0, 1fr); padding: 12px; }
+  .role-run-summary { padding: 10px 12px; }
+  .role-run-body { padding: 10px 12px; }
+}
+/* #935: a repository that still has .bot/ files is told they were imported and can be deleted. */
+.retired-rules{display:grid;gap:var(--space-2);padding:var(--space-4);margin:var(--space-3) 0 0;background:var(--color-brand-weak);border-left:3px solid var(--color-brand);border-radius:var(--radius-2)}
+.retired-rules>.muted{margin:0}

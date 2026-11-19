@@ -1,0 +1,21 @@
+/** @console-modules
+ * project/catalog.js
+ * project/fields.js
+ * project/release-advice.js
+ * project/settings-form.js
+ * project/page.js
+ * project/basic.js
+ * project/triggers.js
+ * project/machine.js
+ * project/task-models.js
+ * project/model-catalog.js
+ * project/model-actions.js
+ * project/model-address.js
+ * project/provider-editor.js
+ * project/model-fields.js
+ * project/members.js
+ * project/activity.js
+ * project/details.js
+ * project/model-section.js
+ * project/schedules-section.js
+ */

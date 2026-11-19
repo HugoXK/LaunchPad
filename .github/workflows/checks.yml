@@ -1,0 +1,185 @@
+name: Checks
+
+# Source checks for pull requests and the merge queue. Together with the image builds in images.yml, the jobs here
+# are the required status checks of main, so they must also run on merge_group or the queue never merges.
+on:
+  pull_request:
+  merge_group:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-shards:
+    name: unit shard ${{ matrix.shard }} / 2
+    runs-on: ubuntu-latest
+    # #734: the slowest recent push run spent 762 s in this job (run 43790528730, npm test alone 727 s), so 30 minutes
+    # leaves room for a cold cache and still ends a wedged required check in half an hour instead of the platform default.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Same major version as the node:22 base of the images.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      # The Pi SDK of the project computer image, for the real Pi controller test; BOT_REQUIRE_PI turns a skip into a failure.
+      - run: npm ci --prefix runner --omit=dev --ignore-scripts
+      - run: npm run check
+      # #734: the bound on the command, not only on the job: a wedged test run fails this step in 25 minutes, while the
+      # job's remaining minutes still run Compose files, and a killed command exits non-zero so the check is a failure.
+      - run: timeout --signal=KILL 1500 npm test
+        env:
+          BOT_REQUIRE_PI: '1'
+          BOT_TEST_JOBS: '4'
+          BOT_TEST_SHARD: ${{ matrix.shard }}/2
+          BOT_TEST_REPORT: .tmp/unit-shard-${{ matrix.shard }}.json
+
+      # Keep every attempt. Diagnostic artifact names sort after unit-summary so the
+      # generic board reader still finds its metrics within its bounded download budget.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: unit-test-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
+          path: .tmp/unit-shard-${{ matrix.shard }}.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Compose files
+        run: |
+          docker compose -f docker/compose.yaml config --quiet
+          docker compose -f docker/compose.yaml -f docker/compose.build.yaml config --quiet
+          BOT_BUILD_CONTEXT=. docker compose --project-directory . -f docker/compose.yaml -f docker/compose.build.yaml config --quiet
+
+  # Keep the required check named unit. Success requires both jobs and a disjoint,
+  # complete report for the current source/weight plan, including on merge_group.
+  unit:
+    name: unit
+    needs: unit-shards
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: unit-test-shard-*
+          path: .tmp/unit-shards
+      - run: node test/framework/unit-shards.mjs merge .tmp/unit-shards
+        if: always()
+      - name: All shard jobs succeeded
+        env:
+          SHARD_RESULT: ${{ needs.unit-shards.result }}
+        run: test "$SHARD_RESULT" = success
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: unit-test-balance-attempt-${{ github.run_attempt }}
+          path: .tmp/unit-balance.json
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14
+      # Preserve the public board's existing Nightly metric names and artifact.
+      - uses: actions/upload-artifact@v7
+        if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        with:
+          name: unit-summary
+          path: .tmp/unit-summary.json
+          include-hidden-files: true
+          overwrite: true
+          if-no-files-found: ignore
+          retention-days: 30
+
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    # #734: 400 s was the slowest recent push run of this job (run 43790528730), so the same 30-minute bound as unit
+    # leaves room for a cold Playwright download without ever reaching the platform default.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # The browser is downloaded once per Playwright version (pinned in package-lock.json) and restored from the Actions
+      # cache afterwards, together with the Chinese font the console is drawn with (for readable failure screenshots).
+      # The runner image already has the browser's shared libraries; of Playwright's system packages only fonts are
+      # missing there, and installing them through apt takes 10-15 seconds, so a cache hit skips apt unless a library is missing.
+      # Only Nightly on main saves the entry: Actions caches are per ref, and PRs and the merge queue can read main's, so
+      # they share one copy instead of each storing its own (about 116 MiB) against the repository's cache quota.
+      - name: Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v6
+        id: browsers
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/.cache/e2e-fonts
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium-headless-shell-fonts
+      # The font only makes failure screenshots readable; a Playwright version that no longer installs it must not fail the job.
+      - if: steps.browsers.outputs.cache-hit != 'true'
+        run: |
+          npx playwright install --with-deps chromium --only-shell
+          mkdir -p ~/.cache/e2e-fonts && { cp /usr/share/fonts/truetype/wqy/wqy-zenhei.ttc ~/.cache/e2e-fonts/ 2>/dev/null || echo 'wqy-zenhei font not installed'; }
+      - if: steps.browsers.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/.cache/e2e-fonts
+          key: ${{ steps.browsers.outputs.cache-primary-key }}
+      - if: steps.browsers.outputs.cache-hit == 'true'
+        run: |
+          if ldd ~/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell | grep 'not found'; then
+            npx playwright install-deps chromium-headless-shell
+          fi
+          mkdir -p ~/.local/share/fonts && { cp ~/.cache/e2e-fonts/* ~/.local/share/fonts/ 2>/dev/null || echo 'no cached fonts'; }
+
+      # #734: bound at 20 minutes so a hung Playwright run fails this step (and the failure-only upload below still
+      # runs) instead of holding the required e2e check for the job's whole 30 minutes or the platform default.
+      - run: timeout --signal=KILL 1200 npm run test:e2e
+        env:
+          PLAYWRIGHT_JUNIT: .tmp/e2e-junit.xml
+
+      - uses: actions/upload-artifact@v7
+        if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        with:
+          name: e2e-junit
+          path: .tmp/e2e-junit.xml
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: e2e-results
+          path: .tmp/e2e-results
+          retention-days: 7

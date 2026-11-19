@@ -1,0 +1,328 @@
+import type { ActorContext } from '../identity/authorization.js';
+import { assertCurrent, authorize } from '../identity/authorization.js';
+import { fail, fields, HttpError, randomId, text, type Json } from '../core/security.js';
+import { ChannelService } from './service.js';
+import { FEISHU_SCOPES, FeishuAdapter } from './feishu.js';
+import { applicationConsole, applicationOrganizations, applicationVisible, canAddApplication, canManageApplication, platformManager, tenantName } from './applications.js';
+import { ChannelConsole } from './console.js';
+
+const applicationForbidden = () => fail(403, 'channel_application_forbidden');
+
+export class ChannelApi {
+  constructor(readonly service: ChannelService) {}
+  async api(actor: ActorContext, method: string, url: URL, input: Json): Promise<Json> {
+    const store = this.service.store, path = url.pathname;
+    assertCurrent(actor);
+    const console = new ChannelConsole(this.service);
+    const chatName = /^\/api\/channels\/chats\/([a-f0-9]{48})\/name$/.exec(path);
+    if (chatName && method === 'POST') { fields(input, []); return console.refreshName(actor, chatName[1]!); }
+    if (path === '/api/channels/conversations' && method === 'GET') return console.list(actor, Number(url.searchParams.get('offset') ?? 0));
+    const consoleChat = /^\/api\/channels\/chats\/([a-f0-9]{48})\/(timeline|tasks|turns\/([a-f0-9]{48}))$/.exec(path);
+    if (consoleChat && method === 'GET') {
+      if (consoleChat[2] === 'timeline') return console.timeline(actor, consoleChat[1]!, url);
+      if (consoleChat[2] === 'tasks') return console.tasks(actor, consoleChat[1]!, Number(url.searchParams.get('offset') ?? 0));
+      return console.events(actor, consoleChat[1]!, consoleChat[3]!, Number(url.searchParams.get('after') ?? 0));
+    }
+    if (path === '/api/channels/employees' && method === 'GET') return this.service.employees.list(actor);
+    if (path === '/api/channels/service-bindings' && method === 'GET') return this.service.serviceBindings.list(actor);
+    const owner = /^\/api\/channels\/chats\/([a-f0-9]{48})\/service-binding\/owner$/.exec(path);
+    if (owner && method === 'PUT') return this.service.serviceBindings.transfer(actor, owner[1]!, input);
+    const binding = /^\/api\/channels\/chats\/([a-f0-9]{48})\/service-binding$/.exec(path);
+    if (binding && method === 'PUT') {
+      const result = await this.service.serviceBindings.configure(actor, binding[1]!, input);
+      if (input.enabled) this.service.ledger.resync(binding[1]!);
+      return result;
+    }
+    const employee = /^\/api\/channels\/chats\/([a-f0-9]{48})\/employee$/.exec(path);
+    // Prompt-driven timers of a private chat or a bound group (#330). Notification destinations are no longer registered here:
+    // a project's schedule panel offers the chats that may receive it directly.
+    if (path === '/api/channels/schedules/preview' && method === 'POST') return this.service.schedules.preview(input);
+    const schedules = /^\/api\/channels\/chats\/([a-f0-9]{48})\/schedules$/.exec(path);
+    if (schedules && method === 'GET') return this.service.schedules.list(actor, schedules[1]!);
+    if (schedules && method === 'POST') return this.service.schedules.create(actor, schedules[1]!, input);
+    const schedule = /^\/api\/channels\/schedules\/([a-f0-9]{48})(\/run)?$/.exec(path);
+    if (schedule && !schedule[2] && method === 'PATCH') return this.service.schedules.update(actor, schedule[1]!, input);
+    if (schedule && !schedule[2] && method === 'DELETE') return this.service.schedules.remove(actor, schedule[1]!, input);
+    if (schedule && schedule[2] && method === 'POST') return this.service.schedules.runNow(actor, schedule[1]!, input);
+    const conversation=/^\/api\/channels\/chats\/([a-f0-9]{48})\/conversation$/.exec(path);
+    if(conversation&&method==='GET')return console.conversation(actor,conversation[1]!,Number(url.searchParams.get('offset')??0));
+    // Stopping a running group answer (#435); its progress messages already sent stay.
+    const turnStop=/^\/api\/channels\/chats\/([a-f0-9]{48})\/service-turns\/([a-f0-9]{48})\/stop$/.exec(path);
+    if(turnStop&&method==='POST'){fields(input,[]);return this.service.stopServiceTurn(actor,turnStop[1]!,turnStop[2]!);}
+    // Legacy employees can only be disabled; a group now binds a service role (#312).
+    if (employee && method === 'PUT') {
+      if (input.enabled !== false) return fail(410, 'channel_employee_retired');
+      return this.service.employees.configure(actor, employee[1]!, input);
+    }
+    if (path === '/api/channels/chats' && method === 'GET') {
+      authorize(actor, 'platform.manage');
+      const connector = url.searchParams.get('connector_id');
+      return { chats: store.all(`SELECT * FROM channel_chats ${connector ? 'WHERE connector_id=?' : ''} ORDER BY last_received_at DESC`,
+        ...(connector ? [connector] : [])).map(chat => ({ ...chat, ...this.service.ledger.diagnostics(chat.id) })) };
+    }
+    const local = /^\/api\/channels\/chats\/([a-f0-9]{48})\/(messages|sync|retention)$/.exec(path);
+    if (local) {
+      // Project access alone does not authorize reading a group's messages or personal chats.
+      if (local[2] === 'messages' && method === 'GET') this.service.authorizeConversation(actor, local[1]!);
+      else if (local[2] === 'sync' && method === 'POST') this.service.authorizeHistory(actor, local[1]!);
+      else authorize(actor, 'platform.manage');
+      const id = local[1]!, chat = store.get('SELECT * FROM channel_chats WHERE id=?', id);
+      if (!chat) return fail(404, 'channel_chat_not_found');
+      if (local[2] === 'messages' && method === 'GET') {
+        const query = Object.fromEntries(url.searchParams);
+        fields(query, ['message_id', 'sender_id', 'reply_to', 'thread_id', 'from', 'to', 'keyword', 'cursor', 'limit']);
+        return this.service.ledger.query(id, { ...query, ...Object.fromEntries(['from', 'to', 'limit'].filter(k => query[k] !== undefined).map(k => [k, Number(query[k])])) });
+      }
+      if (local[2] === 'sync' && method === 'POST') {
+        fields(input, ['full']);
+        if (input.full !== undefined && typeof input.full !== 'boolean') fail(400, 'channel_sync_invalid');
+        this.service.connector(chat.connector_id);
+        this.service.ledger.resync(id, input.full === true);
+        store.audit(actor.principal_id, 'channel.history.resync', id);
+        return { state: 'queued', ...this.service.ledger.diagnostics(id) };
+      }
+      if (local[2] === 'retention') {
+        if (method === 'PUT') {
+          fields(input, ['days', 'expected_revision']);
+          if (input.days !== null && typeof input.days !== 'number' || !Number.isSafeInteger(input.expected_revision)) fail(400, 'channel_retention_invalid');
+          this.service.ledger.retain(id, input.days as number | null, Number(input.expected_revision));
+          store.audit(actor.principal_id, 'channel.retention.updated', id);
+        } else if (method === 'DELETE') {
+          fields(input, ['before', 'expected_revision']);
+          this.service.ledger.cleanup(id, Number(input.before), Number(input.expected_revision));
+          store.audit(actor.principal_id, 'channel.history.cleaned', id);
+        } else if (method !== 'GET') return fail(405, 'method_not_allowed');
+        return this.service.ledger.diagnostics(id);
+      }
+      return fail(405, 'method_not_allowed');
+    }
+    if (path === '/api/channels/setup' && method === 'GET') {
+      if (!applicationConsole(store, actor)) return applicationForbidden();
+      // platform: may add platform-wide apps (and any transport); organizations: where the actor may add an app.
+      return { ...await this.api(actor, 'GET', new URL('/api/channels/connectors', url), {}), origin: this.service.options.origin || null, feishu_scopes: FEISHU_SCOPES,
+        platform: platformManager(actor), organizations: applicationOrganizations(store, actor) };
+    }
+    if (path === '/api/channels/feishu/probe' && method === 'POST') {
+      fields(input, ['connector_id', 'expected_revision', 'app_id', 'app_secret']);
+      // A saved app is probed by its managers; new credentials by anyone who may add an app somewhere.
+      const guard = () => {
+        if (input.connector_id === undefined ? platformManager(actor) || applicationOrganizations(store, actor).length > 0
+          : canManageApplication(actor, store.get('SELECT * FROM channel_connectors WHERE id=?', text(input.connector_id)) ?? {})) return;
+        applicationForbidden();
+      };
+      if (input.connector_id === undefined) guard();
+      // The grant check is advisory: it never fails a probe whose credentials and bot already work.
+      const scopes = async (adapter: FeishuAdapter): Promise<Json> => {
+        try { return { scopes: await adapter.scopeCheck() }; } catch (error) {
+          if (!(error instanceof HttpError) || !['channel_scope_check_unavailable', 'channel_delivery_failed', 'channel_auth_failed', 'channel_rate_limited'].includes(error.code)) throw error;
+          return { scope_error: error.code };
+        }
+      };
+      let adapter: FeishuAdapter;
+      if (input.connector_id !== undefined) {
+        if (input.app_id !== undefined || input.app_secret !== undefined) fail(400, 'unknown_field');
+        const c = store.get('SELECT * FROM channel_connectors WHERE id=?', text(input.connector_id));
+        if (!c) return fail(404, 'channel_connector_not_found');
+        const current = () => {
+          guard();
+          if (store.get('SELECT revision FROM channel_connectors WHERE id=?', c.id)?.revision !== input.expected_revision) fail(409, 'channel_revision_conflict');
+        };
+        current(); adapter = this.service.adapter(c, current);
+        const facts = await adapter.probe();
+        let tenantName = c.tenant_name, tenantError = '';
+        try {
+          const info = await adapter.installationInfo();
+          if (info.tenant_key !== c.installation_tenant) fail(403, 'channel_source_mismatch');
+          tenantName = info.tenant_name || tenantName;
+        } catch (error) {
+          // A display-name lookup must not invalidate working bot credentials or swallow a live permission/revision change.
+          if (!(error instanceof HttpError) || !['channel_tenant_unavailable', 'channel_delivery_failed', 'channel_auth_failed', 'channel_rate_limited'].includes(error.code)) throw error;
+          tenantError = error.code;
+        }
+        // Check grants before the update below can advance the revision this request's guard compares against.
+        const grants = await scopes(adapter);
+        let revision = c.revision;
+        // Preserve a newer application label on lookup failure, while bot-only connections can still refresh their name.
+        const preserve = facts.app_error && c.app_name_source === 'application' && c.app_name;
+        const name = String(preserve ? c.app_name : facts.name || c.app_name);
+        const nameSource = preserve || !facts.name ? c.app_name_source : String(facts.name_source);
+        store.transaction(() => {
+          current();
+          store.run('UPDATE channel_connectors SET app_name=?,tenant_name=?,app_name_source=? WHERE id=?', name, tenantName, nameSource, c.id);
+          if (c.bot_open_id !== facts.bot_open_id) {
+            store.run('UPDATE channel_connectors SET bot_open_id=?,revision=revision+1 WHERE id=? AND revision=?', String(facts.bot_open_id), c.id, c.revision);
+            store.audit(actor.principal_id, 'channel.connector.bot_detected', c.id);
+            revision++;
+          }
+        });
+        return { ...facts, name, name_source: nameSource, tenant_name: tenantName, ...(tenantError ? { tenant_error: tenantError } : {}), ...grants, revision, state: 'verified', event_delivery_verified: false };
+      } else {
+        // Only enterprise apps can authenticate before their first installation ticket arrives.
+        adapter = new FeishuAdapter({ app_id: text(input.app_id, 200), application_type: 'enterprise' },
+          { app_secret: text(input.app_secret, 4096) }, this.service.options.fetch, guard);
+      }
+      const facts = await adapter.probe();
+      return { ...facts, ...await scopes(adapter), state: 'verified', event_delivery_verified: false };
+    }
+    const receipt = /^\/api\/channels\/operations\/([a-f0-9]{48})$/.exec(path);
+    if (receipt && method === 'GET') {
+      const row = store.get('SELECT * FROM channel_control_operations WHERE id=?', receipt[1]!);
+      if (!row) return fail(404, 'channel_operation_not_found');
+      // An app's save receipt is readable by the app's managers.
+      const result = JSON.parse(row.receipt), saved = !row.project_id && result.connector_id ? store.get('SELECT * FROM channel_connectors WHERE id=?', String(result.connector_id)) : undefined;
+      if (row.project_id) authorize(actor, 'config.write', { project_id: row.project_id });
+      else if (!saved || !canManageApplication(actor, saved)) authorize(actor, 'platform.manage');
+      return result;
+    }
+    const profile = /^\/api\/channels\/bindings\/([a-f0-9]{48})\/name$/.exec(path);
+    if (profile && method === 'POST') {
+      fields(input, []);
+      const identity = store.get("SELECT * FROM external_identities WHERE id=? AND principal_id=? AND provider='feishu' AND host='open.feishu.cn' AND status='active' AND (expires_at IS NULL OR expires_at>?)", profile[1]!, actor.principal_id, Date.now());
+      if (!identity) return fail(404, 'identity_not_found');
+      const c = store.get("SELECT * FROM channel_connectors WHERE id||':'||app_id=? AND provider='feishu' AND enabled=1", identity.connector);
+      if (!c) return fail(403, 'channel_connector_inactive');
+      // An installation token cannot look up another enterprise's external users.
+      if (identity.external_tenant !== c.installation_tenant) return fail(403, 'channel_user_name_unavailable');
+      const guard = () => {
+        assertCurrent(actor);
+        const current = this.service.connector(c.id);
+        if (current.revision !== c.revision) fail(409, 'channel_configuration_changed');
+        if (!store.get("SELECT 1 FROM external_identities WHERE id=? AND principal_id=? AND provider='feishu' AND host=? AND status='active' AND connector=? AND external_tenant=? AND external_actor=? AND (expires_at IS NULL OR expires_at>?)",
+          identity.id, actor.principal_id, identity.host, identity.connector, identity.external_tenant, identity.external_actor, Date.now())) fail(403, 'external_binding_required');
+      };
+      let name: string;
+      try { name = await this.service.adapter(c, guard).userName(identity.external_actor); }
+      catch (error) {
+        if (!(error instanceof HttpError) || !['channel_delivery_rejected', 'channel_delivery_failed', 'channel_auth_failed', 'channel_rate_limited'].includes(error.code)) throw error;
+        return fail(502, 'channel_user_name_unavailable');
+      }
+      store.transaction(() => { guard(); store.run('UPDATE external_identities SET display_name=? WHERE id=?', name, identity.id); });
+      return { id: identity.id, display_name: name };
+    }
+    if (path === '/api/channels/bindings' && method === 'GET') return {
+      bindings: store.all(`SELECT e.id,e.provider,e.connector,e.external_tenant,e.external_actor,e.display_name,e.status,e.verified_at,e.expires_at,
+        c.app_name,c.tenant_name,c.owner_tenant,c.enabled AS connection_enabled,
+        CASE WHEN e.status='active' AND (e.expires_at IS NULL OR e.expires_at>?) AND e.host='open.feishu.cn' AND c.enabled=1 AND e.external_tenant=c.installation_tenant THEN 1 ELSE 0 END AS can_read_name
+        FROM external_identities e LEFT JOIN channel_connectors c ON c.id||':'||c.app_id=e.connector
+        WHERE e.principal_id=? AND e.provider='feishu'`, Date.now(), actor.principal_id).map(({ owner_tenant, ...binding }) => ({ ...binding,
+          organization_name: owner_tenant ? tenantName(store, owner_tenant) : '' })),
+      pending: this.service.bindings.pending(actor.principal_id),
+      // Public identifiers let users bind before receiving any project grants; an organization's app only to its members (#424).
+      applications: store.all('SELECT id,app_id,app_name,tenant_name,owner_tenant FROM channel_connectors WHERE enabled=1')
+        .filter(c => applicationVisible(store, actor.principal_id, c)).map(({ owner_tenant, ...c }) => ({ ...c,
+          organization: owner_tenant ? tenantName(store, owner_tenant) : null, chat_url: 'https://applink.feishu.cn/client/bot/open?appId=' + encodeURIComponent(c.app_id) })),
+      can_manage_applications: applicationConsole(store, actor),
+    };
+    if (path === '/api/channels/connectors' && method === 'GET') {
+      if (!applicationConsole(store, actor)) return applicationForbidden();
+      const rows = store.all('SELECT * FROM channel_connectors').filter(c => canManageApplication(actor, c));
+      return { connectors: rows.map(c => ({ ...c, capabilities: this.service.adapter(c).capabilities,
+        owner: c.owner_tenant ? { id: c.owner_tenant, name: tenantName(store, c.owner_tenant) } : null,
+        creator: c.created_by ? store.get('SELECT username FROM users WHERE id=?', c.created_by)?.username ?? null : null,
+        callback_path: '/hooks/feishu/' + c.id, health: { enabled: !!c.enabled, connection_state: c.connection_state, last_received_at: c.last_received_at, last_error: c.last_error,
+          queued: store.get("SELECT count(*) n FROM channel_inbox WHERE connector_id=? AND state IN ('queued','submitted')", c.id)!.n,
+          failed: store.get("SELECT count(*) n FROM channel_outbox WHERE connector_id=? AND state='failed'", c.id)!.n } })) };
+    }
+    const match = /^\/api\/channels\/connectors\/([a-f0-9]{48})(?:\/(outbox|events))?$/.exec(path);
+    if (path === '/api/channels/connectors' && method === 'POST' || match && !match[2] && method === 'PATCH') {
+      // Accept the retired actor_tenants field from older clients without applying an enterprise restriction.
+      fields(input, ['app_id', 'installation_tenant', 'actor_tenants', 'bot_open_id', 'application_type', 'transport', 'enabled', 'credentials', 'expected_revision', 'owner_tenant']);
+      const current = match ? store.get('SELECT * FROM channel_connectors WHERE id=?', match[1]!) : undefined;
+      if (match && !current) return fail(404, 'channel_connector_not_found');
+      // The owner (null: platform-wide), App ID and installation are fixed at creation, so the identities and chats bound
+      // through an app always belong to the same app and organization (#424).
+      const owner = current ? String(current.owner_tenant) : input.owner_tenant == null ? '' : text(input.owner_tenant, 200);
+      if (current) for (const [key, value] of [['owner_tenant', owner || null], ['app_id', current.app_id], ['installation_tenant', current.installation_tenant]] as const)
+        if (input[key] !== undefined && input[key] !== value) fail(400, 'channel_application_immutable', key);
+      if (!current && owner && !store.get('SELECT 1 FROM tenants WHERE id=?', owner)) fail(404, 'organization_not_found', 'owner_tenant');
+      const permitted = () => {
+        const saved = current && store.get('SELECT * FROM channel_connectors WHERE id=?', current.id);
+        if (!(saved ? canManageApplication(actor, saved) : !current && (owner ? canAddApplication(actor, owner) : platformManager(actor)))) applicationForbidden();
+      };
+      permitted();
+      const expected = current?.revision ?? 0;
+      if (input.expected_revision !== expected) fail(409, 'channel_revision_conflict');
+      const get = (key: string) => input[key] ?? current?.[key];
+      const app = current ? String(current.app_id) : text(input.app_id, 200);
+      const type = get('application_type'), transport = get('transport'), enabled = input.enabled ?? (current ? !!current.enabled : false);
+      if (!['enterprise', 'saas'].includes(String(type)) || !['http', 'websocket'].includes(String(transport)) || transport === 'websocket' && type !== 'enterprise') fail(400, 'channel_transport_invalid');
+      if (typeof enabled !== 'boolean') fail(400, 'channel_enabled_invalid');
+      // Whoever holds an HTTP app's verification secrets can forge any member's message; only platform administrators run one.
+      const platformOnly = type !== 'enterprise' || transport !== 'websocket';
+      if (platformOnly && !platformManager(actor)) fail(403, 'channel_transport_forbidden', 'transport');
+      let credential = current?.credential_ref;
+      const id = current?.id ?? randomId(), operation = randomId();
+      const guard = () => {
+        permitted();
+        if (platformOnly && !platformManager(actor)) fail(403, 'channel_transport_forbidden', 'transport');
+        if (current && store.get('SELECT revision FROM channel_connectors WHERE id=?', id)?.revision !== expected) fail(409, 'channel_revision_conflict');
+      };
+      const previous = current ? store.get('SELECT sealed FROM channel_credentials WHERE id=?', current.credential_ref) : undefined;
+      const secret: Json = previous ? store.secrets.open(previous.sealed, 'channel-credential:' + current!.credential_ref) : {};
+      if (input.credentials !== undefined) {
+        const value = input.credentials as Json;
+        if (!value || typeof value !== 'object' || Array.isArray(value)) fail(400, 'channel_credentials_required');
+        fields(value, ['app_secret', 'verification_token', 'encrypt_key']);
+        for (const key of ['app_secret', 'verification_token', 'encrypt_key']) if (value[key] !== undefined) secret[key] = text(value[key], 4096);
+      }
+      if (!previous && input.credentials === undefined) fail(400, 'channel_credentials_required');
+      text(secret.app_secret, 4096);
+      if (transport === 'http' && (!secret.verification_token || !secret.encrypt_key)) fail(400, 'channel_http_credentials_required');
+      // An enterprise token identifies its installation; store apps need an explicit installation before token exchange.
+      const changedType = current && current.application_type !== type;
+      const suppliedInstallation = input.installation_tenant ?? (changedType ? undefined : current?.installation_tenant);
+      const installationInfo = suppliedInstallation === undefined && type === 'enterprise'
+        ? await new FeishuAdapter({ app_id: app, application_type: type }, secret, this.service.options.fetch, guard).installationInfo()
+        : undefined;
+      const installation = installationInfo?.tenant_key ?? text(suppliedInstallation);
+      if (current && installation !== current.installation_tenant) fail(400, 'channel_application_immutable', 'installation_tenant');
+      // Older API clients may supply an ID; the wizard always discovers it from the effective credentials.
+      let bot = input.bot_open_id === undefined ? current?.bot_open_id ?? '' : text(input.bot_open_id);
+      const changedSource = changedType;
+      let appName = changedSource ? '' : current?.app_name ?? '';
+      let appNameSource = changedSource ? '' : current?.app_name_source ?? '';
+      const tenantName = installationInfo?.tenant_name ?? (changedSource ? '' : current?.tenant_name ?? '');
+      if (input.bot_open_id === undefined && (!current || input.credentials !== undefined || changedSource || !bot)) {
+        if (type === 'enterprise') {
+          const facts = await new FeishuAdapter({ app_id: app, application_type: type }, secret, this.service.options.fetch, guard).probe();
+          bot = String(facts.bot_open_id);
+          if (!facts.app_error || appNameSource !== 'application' || !appName) {
+            appName = String(facts.name || appName);
+            if (facts.name) appNameSource = String(facts.name_source);
+          }
+        }
+        // A store app must first save its callback configuration and receive an installation ticket.
+        else if (!current || changedSource) bot = '';
+      }
+      return store.transaction(() => {
+        guard();
+        if (store.get('SELECT 1 FROM channel_connectors WHERE app_id=? AND installation_tenant=? AND id<>?', app, installation, id)) fail(409, 'channel_installation_conflict');
+        if (input.credentials !== undefined) {
+          credential = randomId(); store.run('INSERT INTO channel_credentials VALUES(?,?)', credential, store.secrets.seal(secret, 'channel-credential:' + credential));
+        }
+        if (!credential) fail(400, 'channel_credentials_required');
+        if (current) {
+          store.run('UPDATE channel_connectors SET app_id=?,installation_tenant=?,bot_open_id=?,application_type=?,transport=?,credential_ref=?,enabled=?,revision=revision+1 WHERE id=? AND revision=?',
+            app, installation, bot, String(type), String(transport), credential, Number(enabled), id, expected);
+          if (current.credential_ref !== credential) store.run('DELETE FROM channel_credentials WHERE id=?', current.credential_ref);
+        } else store.run('INSERT INTO channel_connectors(id,provider,app_id,installation_tenant,bot_open_id,application_type,transport,credential_ref,enabled,revision,created_at,owner_tenant,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+          id, 'feishu', app, installation, bot, String(type), String(transport), credential, Number(enabled), 1, Date.now(), owner, actor.principal_id);
+        store.run('UPDATE channel_connectors SET app_name=?,tenant_name=?,app_name_source=? WHERE id=?', appName, tenantName, appNameSource, id);
+        store.audit(actor.principal_id, 'channel.connector.updated', id);
+        const result = { operation_id: operation, state: 'succeeded', connector_id: id, revision: expected + 1 };
+        store.run('INSERT INTO channel_control_operations(id,project_id,receipt) VALUES(?,NULL,?)', operation, JSON.stringify(result));
+        return result;
+      });
+    }
+    if (!match) return fail(404, 'channel_endpoint_not_found');
+    const c = store.get('SELECT * FROM channel_connectors WHERE id=?', match[1]!);
+    if (!c) return fail(404, 'channel_connector_not_found');
+    if (!canManageApplication(actor, c)) return applicationForbidden();
+    if (method === 'GET' && match[2] === 'outbox') return { deliveries: store.all('SELECT id,state,attempts,last_error,remote_message_id,created_at FROM channel_outbox WHERE connector_id=? ORDER BY created_at DESC LIMIT 100', c.id)
+      .map(row=>({...row,parts:store.all('SELECT part,state,first_attempt,remote_id FROM channel_outbox_parts WHERE outbox_id=? ORDER BY part',row.id)})) };
+    if (method === 'GET' && match[2] === 'events') return { operations: store.all(`SELECT i.id AS operation_id,i.state,i.error,i.conversation_id,i.message_id,i.created_at,
+      r.state AS reaction_state,r.last_error AS reaction_error FROM channel_inbox i LEFT JOIN channel_reactions r ON r.source_event=i.id
+      WHERE i.connector_id=? ORDER BY i.created_at DESC LIMIT 100`, c.id) };
+    return fail(404, 'channel_endpoint_not_found');
+  }
+}
