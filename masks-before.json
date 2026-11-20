@@ -1,0 +1,212 @@
+{
+ "task-390-light": [
+  {
+   "kind": "elapsed",
+   "x": 209,
+   "y": 230,
+   "w": 97,
+   "h": 24,
+   "text": "已运行 49h 58m"
+  },
+  {
+   "kind": "duration",
+   "x": 106,
+   "y": 1084,
+   "w": 31,
+   "h": 18,
+   "text": "10m"
+  },
+  {
+   "kind": "scope",
+   "x": -2,
+   "y": -2,
+   "w": 4,
+   "h": 4,
+   "text": "切换项目：Pproject-101fixture⌄"
+  },
+  {
+   "kind": "scope",
+   "x": 10,
+   "y": 113,
+   "w": 370,
+   "h": 59,
+   "text": "切换项目：Pproject-101fixture⌄"
+  }
+ ],
+ "confirm-390-light": [],
+ "task-768-light": [
+  {
+   "kind": "elapsed",
+   "x": 419,
+   "y": 175,
+   "w": 97,
+   "h": 24,
+   "text": "已运行 49h 58m"
+  },
+  {
+   "kind": "duration",
+   "x": 683,
+   "y": 848,
+   "w": 31,
+   "h": 18,
+   "text": "10m"
+  },
+  {
+   "kind": "scope",
+   "x": 14,
+   "y": 78,
+   "w": 163,
+   "h": 59,
+   "text": "切换项目：Pproject-101fixture⌄"
+  },
+  {
+   "kind": "scope",
+   "x": -2,
+   "y": -2,
+   "w": 4,
+   "h": 4,
+   "text": "切换项目：Pproject-101fixture⌄"
+  }
+ ],
+ "confirm-768-light": [],
+ "task-1440-light": [
+  {
+   "kind": "elapsed",
+   "x": 463,
+   "y": 146,
+   "w": 97,
+   "h": 24,
+   "text": "已运行 49h 58m"
+  },
+  {
+   "kind": "duration",
+   "x": 1343,
+   "y": 646,
+   "w": 31,
+   "h": 18,
+   "text": "10m"
+  },
+  {
+   "kind": "scope",
+   "x": 14,
+   "y": 78,
+   "w": 195,
+   "h": 59,
+   "text": "切换项目：Pproject-101fixture⌄"
+  },
+  {
+   "kind": "scope",
+   "x": -2,
+   "y": -2,
+   "w": 4,
+   "h": 4,
+   "text": "切换项目：Pproject-101fixture⌄"
+  }
+ ],
+ "confirm-1440-light": [],
+ "task-390-dark": [
+  {
+   "kind": "elapsed",
+   "x": 209,
+   "y": 230,
+   "w": 97,
+   "h": 24,
+   "text": "已运行 49h 58m"
+  },
+  {
+   "kind": "duration",
+   "x": 106,
+   "y": 1084,
+   "w": 31,
+   "h": 18,
+   "text": "10m"
+  },
+  {
+   "kind": "scope",
+   "x": -2,
+   "y": -2,
+   "w": 4,
+   "h": 4,
+   "text": "切换项目：Pproject-101fixture⌄"
+  },
+  {
+   "kind": "scope",
+   "x": 10,
+   "y": 113,
+   "w": 370,
+   "h": 59,
+   "text": "切换项目：Pproject-101fixture⌄"
+  }
+ ],
+ "confirm-390-dark": [],
+ "task-768-dark": [
+  {
+   "kind": "elapsed",
+   "x": 419,
+   "y": 175,
+   "w": 97,
+   "h": 24,
+   "text": "已运行 49h 58m"
+  },
+  {
+   "kind": "duration",
+   "x": 683,
+   "y": 848,
+   "w": 31,
+   "h": 18,
+   "text": "10m"
+  },
+  {
+   "kind": "scope",
+   "x": 14,
+   "y": 78,
+   "w": 163,
+   "h": 59,
+   "text": "切换项目：Pproject-101fixture⌄"
+  },
+  {
+   "kind": "scope",
+   "x": -2,
+   "y": -2,
+   "w": 4,
+   "h": 4,
+   "text": "切换项目：Pproject-101fixture⌄"
+  }
+ ],
+ "confirm-768-dark": [],
+ "task-1440-dark": [
+  {
+   "kind": "elapsed",
+   "x": 463,
+   "y": 146,
+   "w": 97,
+   "h": 24,
+   "text": "已运行 49h 58m"
+  },
+  {
+   "kind": "duration",
+   "x": 1343,
+   "y": 646,
+   "w": 31,
+   "h": 18,
+   "text": "10m"
+  },
+  {
+   "kind": "scope",
+   "x": 14,
+   "y": 78,
+   "w": 195,
+   "h": 59,
+   "text": "切换项目：Pproject-101fixture⌄"
+  },
+  {
+   "kind": "scope",
+   "x": -2,
+   "y": -2,
+   "w": 4,
+   "h": 4,
+   "text": "切换项目：Pproject-101fixture⌄"
+  }
+ ],
+ "confirm-1440-dark": []
+}

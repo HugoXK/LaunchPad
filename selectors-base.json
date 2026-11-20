@@ -1,0 +1,38 @@
+{
+ "projects": {
+  ".step-fold-body": 0,
+  ".step-fold-stat": 0,
+  ".confirm-status": 0,
+  ".confirm-status.progress": 0
+ },
+ "overview": {
+  ".step-fold-body": 0,
+  ".step-fold-stat": 0,
+  ".confirm-status": 0,
+  ".confirm-status.progress": 0
+ },
+ "tasks": {
+  ".step-fold-body": 0,
+  ".step-fold-stat": 0,
+  ".confirm-status": 0,
+  ".confirm-status.progress": 0
+ },
+ "settings": {
+  ".step-fold-body": 0,
+  ".step-fold-stat": 0,
+  ".confirm-status": 0,
+  ".confirm-status.progress": 0
+ },
+ "audit": {
+  ".step-fold-body": 0,
+  ".step-fold-stat": 0,
+  ".confirm-status": 0,
+  ".confirm-status.progress": 0
+ },
+ "task": {
+  ".step-fold-body": 2,
+  ".step-fold-stat": 1,
+  ".confirm-status": 0,
+  ".confirm-status.progress": 0
+ }
+}
