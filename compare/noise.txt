@@ -1,0 +1,4 @@
+project-1440       head-vs-head2 1440x1217 diff 206 px
+project-detail-1440 head-vs-head2 1440x914 diff 211 px
+task-1440          head-vs-head2 1440x2530 diff 117 px
+task-390           head-vs-head2 dims 390x3093 vs 390x3342 -> page content itself changes between two renders
