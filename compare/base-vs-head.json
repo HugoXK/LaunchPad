@@ -1,0 +1,261 @@
+{
+ "project-390": {
+  "same_size": true,
+  "dims": [
+   390,
+   2810
+  ],
+  "inside_mask": 96,
+  "outside_mask": 0,
+  "mask_rects": [
+   {
+    "label": "updated",
+    "x": 58,
+    "y": 1299,
+    "w": 172,
+    "h": 18,
+    "text": "\u66f4\u65b0\u4e8e 2026-11-20 08:12:45"
+   },
+   {
+    "label": "updated",
+    "x": 58,
+    "y": 1299,
+    "w": 172,
+    "h": 18,
+    "text": "\u66f4\u65b0\u4e8e 2026-11-20 08:13:05"
+   }
+  ]
+ },
+ "project-768": {
+  "same_size": true,
+  "dims": [
+   768,
+   2424
+  ],
+  "inside_mask": 101,
+  "outside_mask": 0,
+  "mask_rects": [
+   {
+    "label": "updated",
+    "x": 593,
+    "y": 949,
+    "w": 114,
+    "h": 18,
+    "text": "\u66f4\u65b0\u4e8e 2026-11-20 08:12:45"
+   },
+   {
+    "label": "updated",
+    "x": 231,
+    "y": 969,
+    "w": 58,
+    "h": 18,
+    "text": "\u66f4\u65b0\u4e8e 2026-11-20 08:12:45"
+   },
+   {
+    "label": "updated",
+    "x": 593,
+    "y": 949,
+    "w": 114,
+    "h": 18,
+    "text": "\u66f4\u65b0\u4e8e 2026-11-20 08:13:05"
+   },
+   {
+    "label": "updated",
+    "x": 231,
+    "y": 969,
+    "w": 58,
+    "h": 18,
+    "text": "\u66f4\u65b0\u4e8e 2026-11-20 08:13:05"
+   }
+  ]
+ },
+ "project-1440": {
+  "same_size": true,
+  "dims": [
+   1440,
+   1217
+  ],
+  "inside_mask": 99,
+  "outside_mask": 0,
+  "mask_rects": [
+   {
+    "label": "updated",
+    "x": 637,
+    "y": 522,
+    "w": 172,
+    "h": 18,
+    "text": "\u66f4\u65b0\u4e8e 2026-11-20 08:12:45"
+   },
+   {
+    "label": "updated",
+    "x": 637,
+    "y": 522,
+    "w": 172,
+    "h": 18,
+    "text": "\u66f4\u65b0\u4e8e 2026-11-20 08:13:05"
+   }
+  ]
+ },
+ "project-detail-390": {
+  "same_size": true,
+  "dims": [
+   390,
+   1857
+  ],
+  "inside_mask": 99,
+  "outside_mask": 0,
+  "mask_rects": [
+   {
+    "label": "updated",
+    "x": 182,
+    "y": 1411,
+    "w": 172,
+    "h": 18,
+    "text": "\u66f4\u65b0\u4e8e 2026-11-20 08:12:49"
+   },
+   {
+    "label": "updated",
+    "x": 182,
+    "y": 1411,
+    "w": 172,
+    "h": 18,
+    "text": "\u66f4\u65b0\u4e8e 2026-11-20 08:13:09"
+   }
+  ]
+ },
+ "project-detail-768": {
+  "same_size": true,
+  "dims": [
+   768,
+   1437
+  ],
+  "inside_mask": 99,
+  "outside_mask": 0,
+  "mask_rects": [
+   {
+    "label": "updated",
+    "x": 390,
+    "y": 1045,
+    "w": 172,
+    "h": 18,
+    "text": "\u66f4\u65b0\u4e8e 2026-11-20 08:12:49"
+   },
+   {
+    "label": "updated",
+    "x": 390,
+    "y": 1045,
+    "w": 172,
+    "h": 18,
+    "text": "\u66f4\u65b0\u4e8e 2026-11-20 08:13:09"
+   }
+  ]
+ },
+ "project-detail-1440": {
+  "same_size": true,
+  "dims": [
+   1440,
+   914
+  ],
+  "inside_mask": 99,
+  "outside_mask": 0,
+  "mask_rects": [
+   {
+    "label": "updated",
+    "x": 434,
+    "y": 578,
+    "w": 172,
+    "h": 18,
+    "text": "\u66f4\u65b0\u4e8e 2026-11-20 08:12:49"
+   },
+   {
+    "label": "updated",
+    "x": 434,
+    "y": 578,
+    "w": 172,
+    "h": 18,
+    "text": "\u66f4\u65b0\u4e8e 2026-11-20 08:13:09"
+   }
+  ]
+ },
+ "task-390": {
+  "same_size": true,
+  "dims": [
+   390,
+   3342
+  ],
+  "inside_mask": 49,
+  "outside_mask": 116,
+  "mask_rects": [
+   {
+    "label": "elapsed",
+    "x": 208,
+    "y": 230,
+    "w": 98,
+    "h": 24,
+    "text": "\u5df2\u8fd0\u884c 48h 12m"
+   },
+   {
+    "label": "elapsed",
+    "x": 208,
+    "y": 230,
+    "w": 98,
+    "h": 24,
+    "text": "\u5df2\u8fd0\u884c 48h 13m"
+   }
+  ]
+ },
+ "task-768": {
+  "same_size": true,
+  "dims": [
+   768,
+   2984
+  ],
+  "inside_mask": 49,
+  "outside_mask": 9250,
+  "mask_rects": [
+   {
+    "label": "elapsed",
+    "x": 418,
+    "y": 175,
+    "w": 98,
+    "h": 24,
+    "text": "\u5df2\u8fd0\u884c 48h 12m"
+   },
+   {
+    "label": "elapsed",
+    "x": 418,
+    "y": 175,
+    "w": 98,
+    "h": 24,
+    "text": "\u5df2\u8fd0\u884c 48h 13m"
+   }
+  ]
+ },
+ "task-1440": {
+  "same_size": true,
+  "dims": [
+   1440,
+   2530
+  ],
+  "inside_mask": 49,
+  "outside_mask": 9250,
+  "mask_rects": [
+   {
+    "label": "elapsed",
+    "x": 462,
+    "y": 146,
+    "w": 98,
+    "h": 24,
+    "text": "\u5df2\u8fd0\u884c 48h 12m"
+   },
+   {
+    "label": "elapsed",
+    "x": 462,
+    "y": 146,
+    "w": 98,
+    "h": 24,
+    "text": "\u5df2\u8fd0\u884c 48h 13m"
+   }
+  ]
+ }
+}

@@ -1,0 +1,409 @@
+跳到主要内容
+工作区
+任务详情
+中文
+English
+administrator
+管理员
+退出登录
+launchpad
+管理控制台
+切换项目
+切换项目：
+P
+project-101
+fixture
+⌄
+项目总览
+任务看板
+待处理
+管理助手
+发版本
+项目知识
+运行状态
+用量与成本
+
+设置
+
+项目设置
+个人设置
+全局设置
+← 返回 project-101 角色视图
+执行中
+P1
+#t-750
+已运行 48h 15m
+fixture/project-101
+追加指令
+暂停
+取消任务
+刷新任务
+关闭
+Issue #750 · 控制台深色主题：跟随系统与手动三态
+
+任务目标：控制台深色主题：跟随系统与手动三态
+
+当前进展
+
+正在执行（模型执行）；读不到角色记录，说不清现在是谁在处理。
+
+关联 Issue
+#750
+关联 PR
+PR #1067 (feat/theme-750)
+Open
+GitHub Actions
+暂无检查记录
+查看 Actions ↗
+同步检查
+角色流转框图
+点击任一已执行角色可定位并展开下方对应记录
+1. Developer
+✕ 中断
+→
+Independent QA
+验收
+任务执行过程（按角色流转历史）
+已完成角色默认折叠，当前执行中角色默认展开；点击任意步骤可独立展开详情。
+全部展开
+全部折叠
+
+已读取 1 条日志
+
+1. Developer
+执行中断
+Pi
+1 步
+10m
+执行步骤（共 1 步，点击单步展开输出详情）
+展开本棒步骤
+折叠本棒步骤
+1.
+工具 read
+08:05:00
+{"type":"tool","name":"read","summary":"读取 static/views.css","ok":true}
+
+Agent 正在请求模型或执行工具…
+
+任务契约、优先级调整与完整审计记录
+任务事实
+目标
+需求版本 1
+
+控制台深色主题：跟随系统与手动三态
+
+验收条件
+没有写明，按目标判断
+交付终点
+尚未明确
+候选
+还没有
+
+执行方提交成果后，候选固定在这里，之后的验收只认这一版。
+
+证据
+还没有
+
+随候选一起提交，例如测试命令的结果和任务记录。
+
+验收
+还没有
+
+有候选后，由独立 QA 在新的上下文里验收。
+
+发布
+还没有
+
+验收通过后，由控制面按工作类型允许的写入发布到 GitHub。
+
+谁在执行
+
+读不到这个任务的角色记录。
+
+实际运行记录
+
+每次重试和恢复保留独立运行；下方 Agent、模型和配置取自该次运行快照。
+
+角色运行记录读取失败，实际执行配置未知。
+
+开发结果
+分支
+feat/theme-750
+提交
+444444444444
+任务
+优先级
+P1
+入队序号
+1
+阶段
+模型执行
+尝试
+第 1 次
+创建
+2026-11-18 08:00:00
+更新
+2026-11-18 08:12:00
+
+P0 紧急止损 · P1 核心阻塞 · P2 正常开发 · P3 非核心完善；改级排到新级队尾，不抢占运行。
+
+P0
+P1
+P2
+P3
+调整优先级
+用量统计
+
+运行 2 秒
+输入 0
+输出 0
+缓存 0
+命中率 —
+
+模型请求
+0
+虚拟电脑（项目环境）
+
+无法读取环境状态。
+
+结构化过程记录
+按需查看分页索引
+
+详情只保留最近 50 条索引；记录正文通过索引中的 source 引用读取。
+
+原始数据
+{
+  "task": {
+    "id": "t-750",
+    "repository_id": "101",
+    "full_name": "fixture/project-101",
+    "kind": "development.issue",
+    "status": "running",
+    "summary": "控制台深色主题：跟随系统与手动三态",
+    "priority": "P1",
+    "queue_seq": 1,
+    "object_number": 750,
+    "head_sha": null,
+    "source_task_id": null,
+    "generation": null,
+    "phase": "model",
+    "error_code": null,
+    "error_cause": null,
+    "retry_count": 0,
+    "retry_cycle_started_at": null,
+    "next_run_at": 0,
+    "pushed_sha": null,
+    "attempt": 1,
+    "result": {
+      "pr_number": 1067,
+      "branch": "feat/theme-750",
+      "sha": "4444444444444444444444444444444444444444"
+    },
+    "created_at": "2026-11-18T08:00:00Z",
+    "updated_at": "2026-11-18T08:12:00Z",
+    "metrics": {
+      "runtime_ms": 2659,
+      "complete": true,
+      "running": true,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cached_input_tokens": 0,
+      "cache_hit_rate": null,
+      "requests": 0,
+      "usage_missing_requests": 0,
+      "cache_missing_requests": 0,
+      "unpriced_requests": 0,
+      "costs": []
+    },
+    "origin": null,
+    "structured": {
+      "children": {
+        "parent_id": null,
+        "parent": null,
+        "children": [],
+        "events": [],
+        "after_event_id": 0,
+        "more": false
+      },
+      "contract": {
+        "goal": "控制台深色主题：跟随系统与手动三态",
+        "scope": [],
+        "criteria": [],
+        "endpoint": null,
+        "source": {
+          "kind": "development.issue",
+          "delivery_id": null
+        },
+        "completeness": "unspecified"
+      },
+      "revision": 1,
+      "priority": {
+        "level": "P1",
+        "sequence": 1
+      },
+      "relations": [],
+      "relation_page": {
+        "total": 0,
+        "next_offset": null,
+        "url": "/api/tasks/t-750/relations"
+      },
+      "progress": {
+        "status": "running",
+        "phase": "model",
+        "attempt": 1,
+        "completed": [],
+        "next_action": null,
+        "waiting_reason": null
+      },
+      "selections": [],
+      "candidate": null,
+      "acceptance": null,
+      "pending": null,
+      "rounds": 0,
+      "coordination": {
+        "waiting_dependencies": [],
+        "requests": [],
+        "notices": []
+      },
+      "retry_reports": [],
+      "submission_reports": [],
+      "scope_differences": [],
+      "project": {
+        "repository_id": "101",
+        "context": null
+      },
+      "followups": []
+    },
+    "error_detail": null,
+    "external": {
+      "issue": {
+        "number": 750,
+        "title": null,
+        "state": null,
+        "url": "https://github.com/fixture/project-101/issues/750"
+      },
+      "pull_request": {
+        "number": 1067,
+        "title": null,
+        "state": "open",
+        "draft": false,
+        "branch": "feat/theme-750",
+        "head_sha": "4444444444444444444444444444444444444444",
+        "url": "https://github.com/fixture/project-101/pull/1067"
+      },
+      "actions": {
+        "status": "none",
+        "head_sha": "4444444444444444444444444444444444444444",
+        "total": 0,
+        "passed": 0,
+        "running": 0,
+        "failed": 0,
+        "checks": [],
+        "url": "https://github.com/fixture/project-101/pull/1067/checks"
+      }
+    }
+  },
+  "can_manage": true,
+  "role_flow": {
+    "stages": [
+      {
+        "parallel": false,
+        "nodes": [
+          {
+            "key": "run-1",
+            "run_id": "run-1",
+            "index_label": "1",
+            "role": "dev",
+            "name": "Developer",
+            "full_name": "Developer",
+            "kind": "writer",
+            "state": "failed",
+            "badge": "✕ 中断",
+            "findings_count": 0,
+            "summary": null
+          }
+        ]
+      },
+      {
+        "parallel": false,
+        "nodes": [
+          {
+            "key": "pending:qa",
+            "run_id": null,
+            "index_label": null,
+            "role": "qa",
+            "name": "Independent QA",
+            "full_name": "Independent QA",
+            "kind": "evaluator",
+            "state": "pending",
+            "badge": "验收",
+            "findings_count": 0,
+            "summary": "待提交候选后执行独立验收"
+          }
+        ]
+      }
+    ],
+    "active_role": null,
+    "active_run_id": null,
+    "has_runs": true
+  },
+  "role_runs": [
+    {
+      "run_id": "run-1",
+      "assignment_id": null,
+      "index_label": "1",
+      "parallel_group": null,
+      "role": "dev",
+      "name": "Developer",
+      "short_name": "Developer",
+      "kind": "writer",
+      "state": "failed",
+      "verdict_badge": "执行中断",
+      "summary": null,
+      "purpose": null,
+      "findings_count": 0,
+      "findings": [],
+      "harness": "pi",
+      "model": null,
+      "started_at": "2026-11-18T08:00:00Z",
+      "ended_at": "2026-11-18T08:10:00Z",
+      "duration_ms": 600000,
+      "default_open": false,
+      "log_count": 1,
+      "history_steps": []
+    }
+  ],
+  "history": [
+    {
+      "id": 1,
+      "type": "created",
+      "created_at": "2026-11-20T08:15:48.361Z",
+      "run_id": null,
+      "event_id": "task_history:1",
+      "source_ref": "task_history:1"
+    },
+    {
+      "id": 2,
+      "type": "runtime_log",
+      "created_at": "2026-11-18T08:05:00Z",
+      "run_id": "run-1",
+      "event_id": "task_history:2",
+      "source_ref": "task_history:2"
+    }
+  ],
+  "history_page": {
+    "has_older": false,
+    "events_url": "/api/tasks/t-750/events",
+    "limit": 50
+  },
+  "publications": [],
+  "dispatch": [],
+  "browser_evidence": {
+    "task_id": "t-750",
+    "total_steps": 0,
+    "truncated": false,
+    "steps": []
+  },
+  "writes": null,
+  "basis": null
+}

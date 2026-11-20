@@ -1,0 +1,32 @@
+import { chromium } from 'playwright';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { harness, setup, account, repository } from './test/fixtures/helpers.mjs';
+const out = process.argv[2] || '.tmp-tasktext';
+mkdirSync(out, { recursive: true });
+const h = await harness();
+const { admin, password } = await setup(h);
+const a = await account(admin);
+await repository(admin, a.id, '101');
+h.store.run("INSERT INTO tasks(id,repository_id,kind,status,priority,summary,object_number,phase,result,created_at,updated_at) VALUES('t-750','101','development.issue','running','P1','控制台深色主题：跟随系统与手动三态',750,'model',?,'2026-11-18T08:00:00Z','2026-11-18T08:12:00Z')",
+  JSON.stringify({ pr_number: 1067, branch: 'feat/theme-750', sha: '4'.repeat(40) }));
+h.store.run("INSERT INTO task_runs(id,task_id,kind,attempt,revision,started_at,ended_at,status,context_snapshot,config_snapshot,role) VALUES('run-1','t-750','execution',1,1,'2026-11-18T08:00:00Z','2026-11-18T08:10:00Z','done','{}','{}','dev')");
+h.store.run("INSERT INTO task_logs(id,task_id,content,created_at,run_id,role) VALUES('l-750','t-750',?,?, 'run-1','dev')",
+  JSON.stringify({ type: 'tool', name: 'read', summary: '读取 static/views.css', ok: true }), '2026-11-18T08:05:00Z');
+const browser = await chromium.launch();
+const ctx = await browser.newContext({ locale: 'zh-CN' });
+const page = await ctx.newPage();
+await page.goto(h.admin + '/#/projects');
+await page.getByLabel('用户名', { exact: true }).fill('administrator');
+await page.getByLabel('密码', { exact: true }).fill(password);
+await page.getByRole('button', { name: '登录', exact: true }).click();
+await page.locator('#workspace').waitFor({ state: 'visible' });
+await page.setViewportSize({ width: 1440, height: 900 });
+await page.goto(h.admin + '/#/tasks/t-750');
+await page.waitForLoadState('networkidle').catch(() => {});
+await page.evaluate(() => document.querySelectorAll('details').forEach((n) => { n.open = true; }));
+await page.waitForTimeout(2500);
+const text = await page.evaluate(() => document.body.innerText);
+writeFileSync(`${out}/task-1440.txt`, text);
+console.log('wrote', `${out}/task-1440.txt`, text.length, 'chars');
+await browser.close();
+await h.stop();

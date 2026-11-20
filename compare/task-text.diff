@@ -1,0 +1,20 @@
+--- tt-base/task-1440.txt	2026-11-20 08:15:52.002477539 +0000
++++ tt-head/task-1440.txt	2026-11-20 08:15:59.086477543 +0000
+@@ -202,7 +202,7 @@
+     "created_at": "2026-11-18T08:00:00Z",
+     "updated_at": "2026-11-18T08:12:00Z",
+     "metrics": {
+-      "runtime_ms": 2659,
++      "runtime_ms": 2683,
+       "complete": true,
+       "running": true,
+       "input_tokens": 0,
+@@ -377,7 +377,7 @@
+     {
+       "id": 1,
+       "type": "created",
+-      "created_at": "2026-11-20T08:15:48.361Z",
++      "created_at": "2026-11-20T08:15:54.683Z",
+       "run_id": null,
+       "event_id": "task_history:1",
+       "source_ref": "task_history:1"
