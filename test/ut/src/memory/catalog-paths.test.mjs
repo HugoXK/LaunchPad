@@ -7,7 +7,7 @@ import { knowledgePath } from '../../../../dist/memory/catalog.js';
 // suffix after `credentials.` and included the documentation and markup suffixes, which reopened the shape most
 // likely to hold a pasted key: `docs/credentials.md`. The allowlist is now source files only.
 test('source files named credentials are allowed', () => {
-  for (const path of ['src/auth/credentials.ts', 'credentials.js', 'src/credentials.py', 'credentials.mjs', 'credentials.tsx', 'credentials.jsx', 'credentials.cjs', 'credentials.rs', 'credentials.go', 'credentials.java', 'credentials.kt', 'credentials.rb', 'credentials.php', 'credentials.sh'])
+  for (const path of ['src/auth/credentials.ts', 'credentials.js', 'src/credentials.py', 'credentials.mjs', 'credentials.tsx', 'credentials.jsx', 'credentials.cjs', 'credentials.rs', 'credentials.go', 'credentials.java', 'credentials.kt', 'credentials.rb', 'credentials.php'])
     assert.doesNotThrow(() => knowledgePath(path), `${path} is not a credential file`);
 });
 
@@ -51,4 +51,11 @@ test('binary key containers and backups of key material stay refused', () => {
 test('a longer name that merely starts like a key file is not refused', () => {
   for (const path of ['server.pemx', 'notes.md', 'tls/server.pemx', 'docs/keystore-notes.md'])
     assert.doesNotThrow(() => knowledgePath(path), `${path} is not a key file`);
+});
+
+// #533: a shell script named credentials is exactly where `export APP_SECRET=…` lives, so it is not a credential-safe
+// source suffix either. The base check refused it; #1195's allowlist let it through, and this slice takes it back.
+test('a shell script named credentials is refused', () => {
+  for (const path of ['credentials.sh', 'src/credentials.sh', 'docs/credentials.sh', 'credentials.sh/x'])
+    assert.throws(() => knowledgePath(path), /memory_sensitive_path/, `${path} must be refused`);
 });
